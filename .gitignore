@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.idea/
+
+# рантайм-данные (генерируются при работе, не исходный код)
+system/rvs/flags/*
+system/rvs/output/*
+system/rvs/debug_audio/*
+logs/raw/*
+!**/.gitkeep

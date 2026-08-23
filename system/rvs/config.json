@@ -1,0 +1,41 @@
+{
+  "_comment": "Настройки Wake+Req (SMOS FWL). Меняй значения и просто перезапускай скрипты. Любое поле можно удалить — тогда используется значение по умолчанию из config.py (DEFAULTS). Поля \"_comment\" — просто заметки, скрипты их не используют.",
+
+  "language": "ru-RU",
+  "check_interval_sec": 0.2,
+
+  "audio": {
+    "_comment": "sample_rate и bit_depth должны совпадать у wake.py и req.py — wake.py пишет WAV, req.py его читает.",
+    "sample_rate": 16000,
+    "bit_depth": 16,
+    "channels": 1,
+    "chunk_size": 1280
+  },
+
+  "wake_word": {
+    "_comment": "Настройки детекции активационного слова (openWakeWord) в wake.py. model_path: null -> грузятся все встроенные модели (hey_jarvis, alexa и др.) для теста; укажи путь к своему .onnx/.tflite, когда обучишь своё слово.",
+    "model_path": null,
+    "detection_threshold": 0.5,
+    "detection_cooldown_sec": 2.0,
+    "prebuffer_seconds": 1.5,
+    "continuation_window_sec": 30
+  },
+
+  "recording": {
+    "_comment": "Настройки записи фразы ПОСЛЕ активации — теперь всё это в wake.py (он сам дожидается конца фразы и пишет её целиком, без склейки с req.py).",
+    "energy_threshold": 300,
+    "pause_threshold_sec": 1.3,
+    "max_utterance_seconds": 15
+  },
+
+  "paths": {
+    "_comment": "Имена файлов/папок относительно папки со скриптами. Трогать без необходимости не стоит.",
+    "flags_dir": "flags",
+    "utterance_file": "utterance.wav",
+    "activity_file": "activity.flag",
+    "output_dir": "output",
+    "output_file": "recognized.json",
+    "debug_audio_dir": "debug_audio",
+    "debug_audio_file": "last_recording.wav"
+  }
+}
