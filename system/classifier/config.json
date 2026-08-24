@@ -1,0 +1,15 @@
+{
+  "check_interval_sec": 0.5,
+  "ai": {
+    "model": "GigaChat-2",
+    "temperature": 0.0,
+    "max_tokens": 10,
+    "verify_ssl_certs": false
+  },
+  "paths": {
+    "rvs_output_dir": "../rvs/output",
+    "rvs_output_file": "recognized.json",
+    "output_dir": "output",
+    "output_file": "classified.json"
+  }
+}
