@@ -10,6 +10,23 @@
     "rvs_output_dir": "../rvs/output",
     "rvs_output_file": "recognized.json",
     "output_dir": "output",
-    "output_file": "classified.json"
+    "output_file": "classified.json",
+    "dataset_file": "dataset.jsonl",
+    "shadow_state_file": "shadow_state.json",
+    "flags_dir": "flags",
+    "promoted_flag": "promoted.flag",
+    "offline_only_flag": "offline_only.flag"
+  },
+  "local_model": {
+    "embedding_model": "cointegrated/rubert-tiny2",
+    "model_file": "local_model.joblib",
+    "model_backup_file": "local_model.joblib.bak",
+    "min_examples_per_class": 30
+  },
+  "shadow": {
+    "retrain_batch_size": 50,
+    "min_comparisons_for_promotion": 30,
+    "agreement_threshold": 0.9,
+    "post_promotion_validation_comparisons": 40
   }
 }
