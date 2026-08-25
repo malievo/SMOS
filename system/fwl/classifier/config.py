@@ -1,7 +1,7 @@
 """
 config.py — загрузка настроек классификатора SMOS из config.json.
 
-Та же схема, что и в system/rvs/config.py: все настройки в одном
+Та же схема, что и в system/fwl/rvs/config.py: все настройки в одном
 config.json рядом со скриптами, читается заново при каждом запуске
 (на лету не подхватывается). Если файла нет или он битый — скрипты не
 падают, работают на DEFAULTS и печатают предупреждение в консоль. Если
@@ -42,7 +42,7 @@ DEFAULTS = {
     },
 
     # Имена файлов и папок, все относительно папки со скриптами (кроме
-    # rvs_output_dir — он относительно СОСЕДНЕЙ папки system/rvs).
+    # rvs_output_dir — он относительно СОСЕДНЕЙ папки system/fwl/rvs).
     "paths": {
         "rvs_output_dir": "../rvs/output",
         "rvs_output_file": "recognized.json",
@@ -59,7 +59,7 @@ DEFAULTS = {
         # рядом с датасетом, а не в flags/.
         "shadow_state_file": "shadow_state.json",
         # Папка с простыми файлами-маркерами (по аналогии с
-        # system/rvs/flags/). Пока в ней всего один флаг — promoted_flag.
+        # system/fwl/rvs/flags/). Пока в ней всего один флаг — promoted_flag.
         "flags_dir": "flags",
         # Наличие этого файла = локальная модель сейчас основная
         # (champion). Отсутствие = используется онлайн-ИИ (bootstrap

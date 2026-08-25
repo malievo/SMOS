@@ -1,7 +1,7 @@
 """
 log_client.py — отправка событий в систему логирования SMOS (logs/listener).
 
-Копия system/rvs/log_client.py под этот модуль (MODULE_NAME другой) —
+Копия system/fwl/rvs/log_client.py под этот модуль (MODULE_NAME другой) —
 так и задумано в logs/PROTOCOL.md: клиент маленький, каждый модуль
 носит свою копию, а не тянет общую зависимость.
 

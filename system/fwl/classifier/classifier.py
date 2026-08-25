@@ -1,7 +1,7 @@
 """
 classifier.py — основной скрипт классификатора «команда / разговор» SMOS.
 
-Следит за output/recognized.json подсистемы rvs (см. system/rvs/req.py)
+Следит за output/recognized.json подсистемы rvs (см. system/fwl/rvs/req.py)
 и на каждую новую распознанную фразу определяет метку. Реализует полный
 жизненный цикл из model_combination_design.md:
 

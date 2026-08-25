@@ -5,10 +5,10 @@ __pycache__/
 .env
 
 # рантайм-данные (генерируются при работе, не исходный код)
-system/rvs/flags/*
-system/rvs/output/*
-system/rvs/debug_audio/*
-system/classifier/output/*
-system/classifier/flags/*
+system/fwl/rvs/flags/*
+system/fwl/rvs/output/*
+system/fwl/rvs/debug_audio/*
+system/fwl/classifier/output/*
+system/fwl/classifier/flags/*
 logs/raw/*
 !**/.gitkeep

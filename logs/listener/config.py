@@ -1,7 +1,7 @@
 """
 config.py — загрузка настроек демона логов (logs/listener) из config.json.
 
-Та же идея, что в system/rvs/config.py: все настройки лежат в config.json
+Та же идея, что в system/fwl/rvs/config.py: все настройки лежат в config.json
 рядом со скриптом, чтобы менять поведение без правки кода. Если
 config.json отсутствует, не найден или содержит битый JSON — listener.py
 не падает, а работает на значениях по умолчанию (DEFAULTS) и печатает
