@@ -9,5 +9,6 @@ system/rvs/flags/*
 system/rvs/output/*
 system/rvs/debug_audio/*
 system/classifier/output/*
+system/classifier/flags/*
 logs/raw/*
 !**/.gitkeep
