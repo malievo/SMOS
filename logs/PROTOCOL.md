@@ -52,7 +52,7 @@ def send_log(module: str, level: str, message: str, data: dict | None = None) ->
 ```
 
 Библиотеку тащить не нужно — это весь код целиком, копируется в папку
-своего модуля (готовый пример: [`system/rvs/log_client.py`](../system/rvs/log_client.py)).
+своего модуля (готовый пример: [`system/fwl/rvs/log_client.py`](../system/fwl/rvs/log_client.py)).
 Для не-Python модулей — то же самое: один UDP-пакет с JSON того же
 формата, на том же адресе.
 
