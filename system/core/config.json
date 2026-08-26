@@ -1,0 +1,11 @@
+{
+  "_comment": "Настройки демона ядра SMOS (core.py). Меняй значения и перезапускай core.py. Любое поле можно удалить — тогда берётся значение по умолчанию из config.py (DEFAULTS). Поля \"_comment\" скрипт не использует.",
+
+  "check_interval_sec": 0.3,
+
+  "paths": {
+    "_comment": "Пути относительно папки с core.py. goals_dir — папка-очередь целей от SWL; rejected_subdir — куда складывать неразобранные файлы целей. Обе — рантайм-данные, в .gitignore.",
+    "goals_dir": "goals",
+    "rejected_subdir": "rejected"
+  }
+}
