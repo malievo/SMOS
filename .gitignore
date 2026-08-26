@@ -11,5 +11,6 @@ system/fwl/rvs/debug_audio/*
 system/fwl/classifier/output/*
 system/fwl/classifier/flags/*
 system/core/module_init/output/*
+system/core/tasks/*
 logs/raw/*
 !**/.gitkeep
