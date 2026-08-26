@@ -16,6 +16,7 @@ registry.py — сканирование папок модулей SMOS и по�
 зависит от того, откуда его запустили.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -31,6 +32,15 @@ from log_client import send_log  # noqa: E402
 PROJECT_ROOT = CORE_DIR.parent.parent  # system/core/ -> system/ -> SMOS/
 SYSTEM_MODULES_DIR = PROJECT_ROOT / "system" / "modules"
 USER_MODULES_DIR = PROJECT_ROOT / "modules"
+
+# Снимок реестра на диске — не источник истины (им остаётся сканирование
+# папок модулей), а копия для чтения глазами и другими частями системы
+# без запуска Python. "modules.json", не "active_modules.json" — реальной
+# проверки "модуль может быть вызван" ещё нет, поле статуса появится,
+# когда появится сама проверка, а не раньше.
+OUTPUT_DIR = SCRIPT_DIR / "output"
+MODULES_FILE = OUTPUT_DIR / "modules.json"
+GRAPH_FILE = OUTPUT_DIR / "graph.json"
 
 
 def _scan_dir(modules_dir: Path) -> list[dict]:
@@ -97,10 +107,28 @@ def build_registry(modules: list[dict]) -> dict:
     return registry
 
 
+def _save_json(path: Path, data) -> None:
+    """Атомарная запись (temp-файл + rename) — тот же приём, что и в
+    rvs/classifier, чтобы читатель никогда не увидел недописанный файл."""
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    tmp_file = path.with_suffix(".tmp")
+    tmp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_file.replace(path)
+
+
+def save(modules: list[dict], registry: dict) -> None:
+    """Сохраняет снимок найденных модулей и построенного графа на диск —
+    смотреть глазами и читать другим частям системы без Python."""
+    _save_json(MODULES_FILE, modules)
+    _save_json(GRAPH_FILE, registry)
+
+
 if __name__ == "__main__":
     found_modules = scan()
     action_registry = build_registry(found_modules)
+    save(found_modules, action_registry)
 
     print(f"[module_init] найдено модулей: {len(found_modules)}, действий: {len(action_registry)}")
     for command, info in action_registry.items():
         print(f"  {command}: needs={info['needs']} produces={info['produces']} (модуль {info['module']!r}, {info['module_dir']})")
+    print(f"[module_init] сохранено: {MODULES_FILE}, {GRAPH_FILE}")
