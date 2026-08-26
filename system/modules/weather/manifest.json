@@ -1,0 +1,13 @@
+{
+  "name": "weather",
+  "description": "Тестовый модуль — погода по городу (сейчас фиктивные данные, для проверки многошаговой цепочки в планировщике)",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "get_weather",
+      "description": "Текущая погода в городе",
+      "needs": ["city"],
+      "produces": ["weather_forecast"]
+    }
+  ]
+}

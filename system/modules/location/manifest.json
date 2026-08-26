@@ -1,0 +1,13 @@
+{
+  "name": "location",
+  "description": "Тестовый модуль — текущий город пользователя (сейчас хардкод, для проверки многошаговой цепочки в планировщике)",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "get_city",
+      "description": "Возвращает текущий город пользователя",
+      "needs": [],
+      "produces": ["city"]
+    }
+  ]
+}
