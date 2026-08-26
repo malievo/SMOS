@@ -1,19 +1,25 @@
 """
-config.py — загрузка настроек демона логов (logs/listener) из config.json.
+config.py — загрузка настроек демона логов (logs/listener).
 
-Та же идея, что в system/fwl/rvs/config.py: все настройки лежат в config.json
-рядом со скриптом, чтобы менять поведение без правки кода. Если
-config.json отсутствует, не найден или содержит битый JSON — listener.py
-не падает, а работает на значениях по умолчанию (DEFAULTS) и печатает
-предупреждение. Если в config.json заполнены не все поля — недостающие
-берутся из DEFAULTS (рекурсивное слияние).
+Та же идея, что в system/fwl/rvs/config.py: все настройки лежат в одном
+JSON-файле — user/configs/logs.json, в общей папке пользовательских
+настроек в корне проекта (рядом с файлом-маркером smos.root). Меняешь
+значение — перезапускаешь listener.py. Если файла нет, корень не найден
+или JSON битый — listener.py не падает, работает на значениях по
+умолчанию (DEFAULTS) и печатает предупреждение. DEFAULTS — и
+поставляемый baseline, и страховка. Если заполнены не все поля —
+недостающие берутся из DEFAULTS (рекурсивное слияние).
 """
 
 import copy
 import json
 from pathlib import Path
 
-CONFIG_FILENAME = "config.json"
+# Имя этого конфига внутри user/configs/. ROOT_MARKER — пустой файл в
+# корне проекта, по нему находится папка user/ независимо от того,
+# откуда запущен скрипт.
+CONFIG_NAME = "logs.json"
+ROOT_MARKER = "smos.root"
 
 DEFAULTS = {
     "listener": {
@@ -45,26 +51,42 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _project_root(start: Path) -> Path | None:
+    """Поднимается от start вверх до папки с файлом-маркером ROOT_MARKER
+    (корень проекта SMOS). None — если маркер не найден нигде выше."""
+    start = Path(start).resolve()
+    for folder in (start, *start.parents):
+        if (folder / ROOT_MARKER).exists():
+            return folder
+    return None
+
+
 def load(base_dir: Path) -> dict:
-    """Загружает config.json из папки base_dir (обычно — папка самого
-    скрипта) и накладывает его поверх DEFAULTS. Не бросает исключений
-    наружу: если файла нет или он битый — печатает предупреждение и
-    возвращает DEFAULTS."""
-    config_file = Path(base_dir) / CONFIG_FILENAME
+    """Загружает user/configs/<CONFIG_NAME> и накладывает его поверх
+    DEFAULTS. base_dir — папка вызывающего скрипта (SCRIPT_DIR): от неё
+    ищется корень проекта. Не бросает исключений наружу: корень не
+    найден, файла нет, битый JSON или не JSON-объект — печатает
+    предупреждение и возвращает DEFAULTS."""
+    root = _project_root(base_dir)
+    if root is None:
+        print(f"[config] не найден корень проекта (файл {ROOT_MARKER}) — использую значения по умолчанию.")
+        return copy.deepcopy(DEFAULTS)
+
+    config_file = root / "user" / "configs" / CONFIG_NAME
 
     if not config_file.exists():
-        print(f"[config] {CONFIG_FILENAME} не найден рядом со скриптом — использую значения по умолчанию.")
+        print(f"[config] {config_file} не найден — использую значения по умолчанию.")
         return copy.deepcopy(DEFAULTS)
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             user_config = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        print(f"[config] Не удалось прочитать {CONFIG_FILENAME} ({e}) — использую значения по умолчанию.")
+        print(f"[config] Не удалось прочитать {config_file} ({e}) — использую значения по умолчанию.")
         return copy.deepcopy(DEFAULTS)
 
     if not isinstance(user_config, dict):
-        print(f"[config] {CONFIG_FILENAME} должен содержать JSON-объект — использую значения по умолчанию.")
+        print(f"[config] {config_file} должен содержать JSON-объект — использую значения по умолчанию.")
         return copy.deepcopy(DEFAULTS)
 
     return _deep_merge(DEFAULTS, user_config)

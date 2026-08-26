@@ -17,11 +17,11 @@ extract(text, catalog) наружу не меняется.
 брать каталог из catalog.py, а не отсюда.
 
 Установка: pip install gigachat python-dotenv
-Ключ доступа — переменная окружения GIGACHAT_CREDENTIALS, в файле .env
-рядом с этим скриптом (GIGACHAT_CREDENTIALS=...). .env уже в .gitignore.
-Если своего .env у SWL нет — как запасной вариант подхватывается .env
-классификатора (тот же ключ, тот же GigaChat), чтобы не держать две
-копии секрета.
+Ключ доступа — переменная окружения GIGACHAT_CREDENTIALS, в файле
+user/.env в корне проекта (GIGACHAT_CREDENTIALS=...). Это общий секрет
+облачных провайдеров — тот же файл читает классификатор, одна копия на
+всю систему. user/.env в .gitignore. Путь к нему находит
+config.user_env_file().
 """
 
 import json
@@ -39,10 +39,10 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import config  # noqa: E402
 
-# .env: сначала свой, потом — как запасной — у классификатора (тот же ключ).
-load_dotenv(SCRIPT_DIR / ".env")
-if not os.environ.get("GIGACHAT_CREDENTIALS"):
-    load_dotenv(SCRIPT_DIR.parent / "fwl" / "classifier" / ".env")
+# Один общий секрет на всю систему — user/.env в корне проекта.
+_env_file = config.user_env_file(SCRIPT_DIR)
+if _env_file:
+    load_dotenv(_env_file)
 
 CFG = config.load(SCRIPT_DIR)
 

@@ -1,21 +1,24 @@
 """
-config.py — загрузка общих настроек Wake+Req (SMOS FWL) из config.json.
+config.py — загрузка общих настроек Wake+Req (SMOS FWL).
 
 Идея: все настройки, которые раньше были разбросаны константами по
-req.py и wake.py, теперь лежат в одном файле config.json рядом со
-скриптами. Чтобы поменять поведение — не нужно лезть в код, достаточно
-поправить config.json и перезапустить скрипты (конфиг читается заново
-при каждом запуске, "на лету" не подхватывается).
+req.py и wake.py, лежат в одном JSON-файле. Чтобы поменять поведение —
+не нужно лезть в код, достаточно поправить его и перезапустить скрипты
+(конфиг читается заново при каждом запуске, "на лету" не
+подхватывается).
 
-Если config.json отсутствует, не найден или содержит битый JSON — оба
-скрипта не падают, а просто работают на значениях по умолчанию (см.
-DEFAULTS ниже) и печатают предупреждение в консоль.
+Где лежит файл: user/configs/rvs.json — в общей папке пользовательских
+настроек в корне проекта (там же, где файл-маркер smos.root). Раньше
+config.json лежал рядом с этим скриптом; теперь все конфиги системы
+собраны в user/configs/, вне репозитория, чтобы переживать обновление.
 
-Если в config.json заполнены не все поля — недостающие берутся из
-DEFAULTS (рекурсивное слияние), то есть файл можно редактировать
-частично, не переписывая целиком.
+Если файла нет, корень проекта не найден или в файле битый JSON — оба
+скрипта не падают, а работают на значениях по умолчанию (DEFAULTS ниже)
+и печатают предупреждение. DEFAULTS — это и поставляемый baseline, и
+страховка. Заполнять user/configs/rvs.json можно частично — недостающие
+поля берутся из DEFAULTS (рекурсивное слияние).
 
-Использование в req.py / wake.py:
+Использование в req.py / wake.py (без изменений — как и раньше):
     import config
     CFG = config.load(SCRIPT_DIR)
     CFG["audio"]["sample_rate"]
@@ -26,7 +29,11 @@ import copy
 import json
 from pathlib import Path
 
-CONFIG_FILENAME = "config.json"
+# Имя этого конфига внутри user/configs/. ROOT_MARKER — пустой файл в
+# корне проекта, по нему load() находит папку user/configs/ независимо
+# от того, откуда запущен скрипт.
+CONFIG_NAME = "rvs.json"
+ROOT_MARKER = "smos.root"
 
 # Значения по умолчанию — используются целиком, если config.json нет,
 # и как "заглушка" для отдельных полей, если их нет в config.json.
@@ -132,28 +139,44 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def load(base_dir: Path) -> dict:
-    """Загружает config.json из папки base_dir (обычно — папка самого
-    скрипта, SCRIPT_DIR) и накладывает его поверх DEFAULTS.
+def _project_root(start: Path) -> Path | None:
+    """Поднимается от start вверх до папки с файлом-маркером ROOT_MARKER
+    (корень проекта SMOS). None — если маркер не найден нигде выше."""
+    start = Path(start).resolve()
+    for folder in (start, *start.parents):
+        if (folder / ROOT_MARKER).exists():
+            return folder
+    return None
 
-    Не бросает исключений наружу: если файла нет или он битый —
-    печатает предупреждение и возвращает DEFAULTS, чтобы опечатка в
-    конфиге не роняла весь скрипт."""
-    config_file = Path(base_dir) / CONFIG_FILENAME
+
+def load(base_dir: Path) -> dict:
+    """Загружает user/configs/<CONFIG_NAME> и накладывает его поверх
+    DEFAULTS. base_dir — папка вызывающего скрипта (SCRIPT_DIR): от неё
+    ищется корень проекта.
+
+    Не бросает исключений наружу: корень не найден, файла нет, битый
+    JSON или не JSON-объект — печатает предупреждение и возвращает
+    DEFAULTS, чтобы опечатка в конфиге не роняла весь скрипт."""
+    root = _project_root(base_dir)
+    if root is None:
+        print(f"[config] не найден корень проекта (файл {ROOT_MARKER}) — использую значения по умолчанию.")
+        return copy.deepcopy(DEFAULTS)
+
+    config_file = root / "user" / "configs" / CONFIG_NAME
 
     if not config_file.exists():
-        print(f"[config] {CONFIG_FILENAME} не найден рядом со скриптом — использую значения по умолчанию.")
+        print(f"[config] {config_file} не найден — использую значения по умолчанию.")
         return copy.deepcopy(DEFAULTS)
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             user_config = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        print(f"[config] Не удалось прочитать {CONFIG_FILENAME} ({e}) — использую значения по умолчанию.")
+        print(f"[config] Не удалось прочитать {config_file} ({e}) — использую значения по умолчанию.")
         return copy.deepcopy(DEFAULTS)
 
     if not isinstance(user_config, dict):
-        print(f"[config] {CONFIG_FILENAME} должен содержать JSON-объект — использую значения по умолчанию.")
+        print(f"[config] {config_file} должен содержать JSON-объект — использую значения по умолчанию.")
         return copy.deepcopy(DEFAULTS)
 
     return _deep_merge(DEFAULTS, user_config)

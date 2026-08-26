@@ -10,7 +10,7 @@ registry.py — сканирование папок модулей SMOS и по�
 Смотрит две папки одинаково, без разницы в обработке (см.
 ../../swl/swl_design.md):
 - system/modules/  — модули, которые идут вместе с репозиторием SMOS
-- modules/ (в корне проекта) — личные модули, вне репозитория
+- user/modules/    — личные модули пользователя, вне репозитория
 
 Скрипт сам находит своё расположение и вычисляет пути от него — не
 зависит от того, откуда его запустили.
@@ -31,7 +31,7 @@ from log_client import send_log  # noqa: E402
 
 PROJECT_ROOT = CORE_DIR.parent.parent  # system/core/ -> system/ -> SMOS/
 SYSTEM_MODULES_DIR = PROJECT_ROOT / "system" / "modules"
-USER_MODULES_DIR = PROJECT_ROOT / "modules"
+USER_MODULES_DIR = PROJECT_ROOT / "user" / "modules"
 
 # Снимок реестра на диске — не источник истины (им остаётся сканирование
 # папок модулей), а копия для чтения глазами и другими частями системы
