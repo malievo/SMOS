@@ -1,0 +1,13 @@
+{
+  "name": "echo",
+  "description": "Тестовый модуль для проверки сканера/реестра — просто возвращает то, что получил",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "echo",
+      "description": "Возвращает переданный текст как есть",
+      "needs": ["text"],
+      "produces": ["echoed_text"]
+    }
+  ]
+}
