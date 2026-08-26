@@ -10,9 +10,16 @@ manifest.py — чтение и валидация манифеста одног
   "description": "...",
   "entrypoint": {"command": ["python3", "main.py"]},
   "actions": [
-    {"command": "get_weather", "description": "...", "needs": ["city"], "produces": ["weather_forecast"]}
+    {"command": "get_weather", "description": "...", "needs": ["city"], "produces": ["weather_forecast"], "cost": 1}
   ]
 }
+
+`cost` — необязательное число (по умолчанию `DEFAULT_ACTION_COST`, если
+не указано). Планировщик его пока не использует для выбора между
+путями (нечего пока сравнивать) — но поле уже проверяется и попадает в
+реестр, чтобы не пришлось задним числом дописывать его во все
+манифесты, когда логика выбора появится. См. рассуждение в
+manifest_design.md.
 
 Модуль без манифеста или с манифестом, не прошедшим валидацию, не
 должен ронять сканирование остальных модулей — поэтому load() бросает
@@ -27,6 +34,8 @@ MANIFEST_FILENAME = "manifest.json"
 
 REQUIRED_MODULE_FIELDS = ("name", "entrypoint", "actions")
 REQUIRED_ACTION_FIELDS = ("command", "needs", "produces")
+
+DEFAULT_ACTION_COST = 1
 
 
 class ManifestError(Exception):
@@ -75,3 +84,6 @@ def _validate(data: dict, source: Path) -> None:
                 raise ManifestError(f"{source}: actions[{i}] — не хватает поля {field!r}")
         if not isinstance(action["needs"], list) or not isinstance(action["produces"], list):
             raise ManifestError(f"{source}: actions[{i}] — needs/produces должны быть списками строк")
+
+        if "cost" in action and not isinstance(action["cost"], (int, float)):
+            raise ManifestError(f"{source}: actions[{i}] — cost должен быть числом")
