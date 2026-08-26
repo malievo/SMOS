@@ -80,7 +80,12 @@ def build_registry(modules: list[dict]) -> dict:
     действий — этим реестром пользуется планировщик (achieve() из
     core_design.md) для поиска "кто производит X".
 
-    {action_command: {"module", "module_dir", "entrypoint", "needs", "produces"}}
+    {action_command: {"module", "module_dir", "entrypoint", "needs", "produces", "cost"}}
+
+    cost сейчас никем не используется для выбора между путями (нечего
+    пока сравнивать, см. manifest_design.md) — просто пробрасывается с
+    дефолтом, чтобы не пришлось задним числом дописывать его в старые
+    манифесты, когда появится сама логика сравнения.
     """
     registry = {}
     for mod in modules:
@@ -102,6 +107,7 @@ def build_registry(modules: list[dict]) -> dict:
                 "entrypoint": mod["entrypoint"]["command"],
                 "needs": action["needs"],
                 "produces": action["produces"],
+                "cost": action.get("cost", manifest.DEFAULT_ACTION_COST),
             }
 
     return registry
