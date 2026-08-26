@@ -8,9 +8,11 @@ ai_provider.py — обёртка над облачной LLM для класс�
 
 Установка: pip install gigachat python-dotenv
 Ключ доступа берётся из переменной окружения GIGACHAT_CREDENTIALS —
-положите его в файл .env рядом с этим скриптом (GIGACHAT_CREDENTIALS=...),
-.env уже в .gitignore, так что ключ не попадёт в git. Остальные настройки
-(модель, temperature и т.п.) — в config.json, см. config.py.
+положите его в файл user/.env в корне проекта (GIGACHAT_CREDENTIALS=...).
+Это общий секрет облачных провайдеров (тот же ключ использует SWL);
+user/.env в .gitignore, так что ключ не попадёт в git. Путь к нему
+находит config.user_env_file(). Остальные настройки (модель,
+temperature и т.п.) — в user/configs/classifier.json, см. config.py.
 """
 
 import os
@@ -27,7 +29,9 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import config  # noqa: E402
 
-load_dotenv()
+_env_file = config.user_env_file(SCRIPT_DIR)
+if _env_file:
+    load_dotenv(_env_file)
 CFG = config.load(SCRIPT_DIR)
 
 SYSTEM_PROMPT = (
