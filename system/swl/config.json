@@ -1,0 +1,22 @@
+{
+  "_comment": "Настройки SWL (SMOS). Меняй значения и перезапускай swl.py. Любое поле можно удалить — тогда берётся значение по умолчанию из config.py (DEFAULTS). Поля \"_comment\" скрипт не использует.",
+
+  "check_interval_sec": 0.5,
+
+  "ai": {
+    "_comment": "GigaChat как разборщик фразы в цель на bootstrap-этапе (см. swl_design.md). Те же ключи и значения, что у классификатора, кроме max_tokens — здесь ответ это JSON-объект, а не одно слово.",
+    "model": "GigaChat-2",
+    "temperature": 0.0,
+    "max_tokens": 300,
+    "verify_ssl_certs": false
+  },
+
+  "paths": {
+    "_comment": "Пути к чужим папкам — относительно папки со скриптами SWL (system/swl/). classifier_output_* — вход (что пишет классификатор); core_goals_dir — выход (папка-очередь целей демона ядра).",
+    "classifier_output_dir": "../fwl/classifier/output",
+    "classifier_output_file": "classified.json",
+    "core_goals_dir": "../core/goals",
+    "output_dir": "output",
+    "dataset_file": "dataset.jsonl"
+  }
+}
