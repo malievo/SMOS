@@ -1,0 +1,19 @@
+{
+  "name": "greeting",
+  "description": "Тестовый модуль — приветствие и прощание. Два действия в одном манифесте, для проверки формата.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "say_hello",
+      "description": "Поздороваться с пользователем",
+      "needs": [],
+      "produces": ["greeting_text"]
+    },
+    {
+      "command": "say_bye",
+      "description": "Попрощаться с пользователем",
+      "needs": [],
+      "produces": ["farewell_text"]
+    }
+  ]
+}
