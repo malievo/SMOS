@@ -1,0 +1,13 @@
+{
+  "name": "clock",
+  "description": "Тестовый модуль — текущее время (фиктивное, для проверки)",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "get_time",
+      "description": "Возвращает текущее время",
+      "needs": [],
+      "produces": ["current_time"]
+    }
+  ]
+}
