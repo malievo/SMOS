@@ -33,6 +33,15 @@ PROJECT_ROOT = CORE_DIR.parent.parent  # system/core/ -> system/ -> SMOS/
 SYSTEM_MODULES_DIR = PROJECT_ROOT / "system" / "modules"
 USER_MODULES_DIR = PROJECT_ROOT / "user" / "modules"
 
+# Корень личных папок данных модулей — user/module_data/<name>/, отдельно
+# от кода модуля, ключ — поле name из манифеста (см. manifest_design.md,
+# раздел "Хранение данных модуля"). Папка конкретного модуля создаётся
+# при scan() (модуль обнаружен -> место отведено); путь кладётся в
+# снапшоты (modules.json как _data_dir, graph.json как data_dir) и
+# передаётся модулю переменной окружения SMOS_MODULE_DATA в
+# planner.call_module. Сам модуль путь не вычисляет.
+USER_MODULE_DATA_DIR = PROJECT_ROOT / "user" / "module_data"
+
 # Снимок реестра на диске — не источник истины (им остаётся сканирование
 # папок модулей), а копия для чтения глазами и другими частями системы
 # без запуска Python. "modules.json", не "active_modules.json" — реальной
@@ -45,8 +54,13 @@ GRAPH_FILE = OUTPUT_DIR / "graph.json"
 
 def _scan_dir(modules_dir: Path) -> list[dict]:
     """Проходит по подпапкам modules_dir, возвращает список валидных
-    манифестов модулей (с добавленным служебным полем _module_dir —
-    он понадобится потом, чтобы знать, откуда запускать entrypoint)."""
+    манифестов модулей. К каждому добавлены служебные поля:
+    - _module_dir — папка с кодом модуля (откуда запускать entrypoint);
+    - _data_dir   — ЛИЧНАЯ папка данных модуля (user/module_data/<name>/),
+      её же здесь и создаём: модуль обнаружен -> сразу отведено место.
+      Отдельно от кода, ключ — name из манифеста (см. manifest_design.md,
+      раздел "Хранение данных модуля"). Система только выделяет место;
+      что и как модуль в нём хранит — его дело."""
     found = []
     if not modules_dir.exists():
         return found
@@ -61,7 +75,11 @@ def _scan_dir(modules_dir: Path) -> list[dict]:
             print(f"[module_init] пропускаю {entry.name}: {e}")
             continue
 
+        data_dir = USER_MODULE_DATA_DIR / data["name"]
+        data_dir.mkdir(parents=True, exist_ok=True)
+
         data["_module_dir"] = str(entry)
+        data["_data_dir"] = str(data_dir)
         found.append(data)
 
     return found
@@ -69,7 +87,9 @@ def _scan_dir(modules_dir: Path) -> list[dict]:
 
 def scan() -> list[dict]:
     """Сканирует обе папки модулей, возвращает список манифестов
-    (каждый — уже провалидированный dict из manifest.load())."""
+    (каждый — уже провалидированный dict из manifest.load(), с
+    добавленными _module_dir и _data_dir). Побочный эффект: создаёт
+    личную папку данных каждого найденного модуля (см. _scan_dir)."""
     modules = _scan_dir(SYSTEM_MODULES_DIR) + _scan_dir(USER_MODULES_DIR)
     send_log("INFO", "modules_scanned", {"count": len(modules)})
     return modules
@@ -80,7 +100,7 @@ def build_registry(modules: list[dict]) -> dict:
     действий — этим реестром пользуется планировщик (achieve() из
     core_design.md) для поиска "кто производит X".
 
-    {action_command: {"module", "module_dir", "entrypoint", "needs", "produces", "cost"}}
+    {action_command: {"module", "module_dir", "data_dir", "entrypoint", "needs", "produces", "cost"}}
 
     cost сейчас никем не используется для выбора между путями (нечего
     пока сравнивать, см. manifest_design.md) — просто пробрасывается с
@@ -104,6 +124,7 @@ def build_registry(modules: list[dict]) -> dict:
             registry[command] = {
                 "module": mod["name"],
                 "module_dir": mod["_module_dir"],
+                "data_dir": mod["_data_dir"],
                 "entrypoint": mod["entrypoint"]["command"],
                 "needs": action["needs"],
                 "produces": action["produces"],
