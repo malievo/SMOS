@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,6 +37,15 @@ from log_client import send_log  # noqa: E402
 # (в .gitignore).
 TASKS_DIR = CORE_DIR / "tasks"
 
+# Очередь результатов для следующей стадии (приведение ответа в
+# человеческий вид → синтез речи). Ядро сюда ПИШЕТ по завершении задачи —
+# так же, как SWL пишет в core/goals/: вход принадлежит потребителю,
+# производитель в него кладёт. tasks/<id>/state.json остаётся как
+# долговременная запись; этот файл — компактное уведомление «задача
+# готова, вот что сказать». Потребителя (outputstructurizer) пока нет —
+# файлы просто копятся, как копилась бы core/goals/ без запущенного ядра.
+OUTPUTSTRUCTURIZER_QUEUE_DIR = CORE_DIR.parent / "outputstructurizer" / "queue"
+
 
 def _new_task_id() -> str:
     """Человекочитаемый и гарантированно уникальный id: время создания —
@@ -53,10 +63,42 @@ def _save_state(task_dir: Path, state: dict) -> None:
     tmp_file.replace(task_dir / "state.json")
 
 
-def _run_task(task_id: str, goal: str, initial_state: dict, graph: dict) -> None:
+def _emit_completion(record: dict, source_text: str | None) -> None:
+    """Кладёт компактный файл-результат в очередь следующей стадии
+    (OUTPUTSTRUCTURIZER_QUEUE_DIR). Атомарно (temp + rename), имя файла =
+    task_id (он уже уникален и по времени, значит очередь читается по
+    порядку поступления). Пишется и на done, и на error — ошибку тоже
+    надо проговорить пользователю ("не смог ...").
+
+    Место под поле speech (дословная формулировка от модуля, который
+    произвёл цель) оставлено на будущее — сейчас его никто не заполняет
+    и не читает, см. system/audio/audio_design.md."""
+    OUTPUTSTRUCTURIZER_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "task_id": record["task_id"],
+        "goal": record["goal"],
+        "status": record["status"],
+        "result": record["result"],
+        "error": record["error"],
+        "state": record["state"],
+        "source_text": source_text,
+        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    name = f"{record['task_id']}.json"
+    tmp_file = OUTPUTSTRUCTURIZER_QUEUE_DIR / (name + ".tmp")
+    tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_file.replace(OUTPUTSTRUCTURIZER_QUEUE_DIR / name)
+
+
+def _run_task(task_id: str, goal: str, initial_state: dict, graph: dict,
+              source_text: str | None = None) -> None:
     """Код одного потока задачи. Обычный последовательный/блокирующий
     код — блокируется сам на себя (внутри achieve(), на вызовах
-    модулей), но это не блокирует ядро в целом, см. create_task()."""
+    модулей), но это не блокирует ядро в целом, см. create_task().
+
+    source_text — исходная фраза пользователя (от SWL через ядро), едет
+    дальше в очередь результатов: формулировка ответа зависит от того,
+    как спросили ("сколько времени" vs "который час")."""
     task_dir = TASKS_DIR / task_id
     record = {
         "task_id": task_id,
@@ -80,15 +122,22 @@ def _run_task(task_id: str, goal: str, initial_state: dict, graph: dict) -> None
         send_log("ERROR", "task_failed", {"task_id": task_id, "goal": goal, "error": str(e)})
 
     _save_state(task_dir, record)
+    _emit_completion(record, source_text)
 
 
-def create_task(goal: str, initial_state: dict, graph: dict) -> str:
+def create_task(goal: str, initial_state: dict, graph: dict,
+                source_text: str | None = None) -> str:
     """Создаёт задачу и сразу возвращает её id, не дожидаясь
     выполнения — сама задача выполняется в отдельном потоке. Вызывающий
     код (главный цикл ядра) тут же свободен принимать следующую цель —
-    это и есть требование "ядро асинхронно" из core_design.md."""
+    это и есть требование "ядро асинхронно" из core_design.md.
+
+    source_text — необязательная исходная фраза, пробрасывается в
+    файл-результат для стадии формулировки ответа."""
     task_id = _new_task_id()
-    thread = threading.Thread(target=_run_task, args=(task_id, goal, initial_state, graph), daemon=True)
+    thread = threading.Thread(
+        target=_run_task, args=(task_id, goal, initial_state, graph, source_text), daemon=True
+    )
     thread.start()
     return task_id
 
