@@ -9,6 +9,7 @@ __pycache__/
 # коммитятся. Остальное в user/ — личное, вне репозитория.
 user/modules/*
 user/memory/*
+user/module_data/*
 user/.env
 
 # рантайм-данные (генерируются при работе, не исходный код)
@@ -18,7 +19,6 @@ system/fwl/rvs/debug_audio/*
 system/fwl/classifier/output/*
 system/fwl/classifier/flags/*
 system/core/module_init/output/*
-system/modules/*/data/*
 system/core/tasks/*
 system/core/goals/*
 system/swl/output/*

@@ -11,6 +11,7 @@ SWL, из теста, откуда угодно, ему всё равно.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -47,13 +48,29 @@ def find_action_that_produces(target_key: str, graph: dict):
 
 def call_module(action: dict, command: str, params: dict) -> dict:
     """Запускает модуль как процесс, передаёт command+params, читает
-    JSON-ответ из stdout. Протокол — см. ../module_init/manifest_design.md."""
+    JSON-ответ из stdout. Протокол — см. ../module_init/manifest_design.md.
+
+    В окружении модуля ставится SMOS_MODULE_DATA — абсолютный путь к его
+    личной папке данных (`user/module_data/<name>/`). Саму папку заводит
+    module_init при обнаружении модуля (registry._scan_dir); здесь
+    mkdir(exist_ok=True) — только страховка на случай, если папку удалили
+    при работе или модуль вызывают в тесте без предварительного scan().
+    Всё, что модуль хочет сохранить между вызовами, он кладёт туда;
+    папка отдельно от кода модуля и переживает его
+    удаление/переустановку (см. manifest_design.md, раздел "Хранение
+    данных модуля"). Что и как хранить внутри — дело модуля, система
+    только выделяет место."""
+    data_dir = Path(action["data_dir"])
+    data_dir.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "SMOS_MODULE_DATA": str(data_dir)}
+
     cmd = [*action["entrypoint"], command, json.dumps(params, ensure_ascii=False)]
 
     try:
         result = subprocess.run(
             cmd,
             cwd=action["module_dir"],
+            env=env,
             capture_output=True,
             text=True,
             timeout=DEFAULT_TIMEOUT_SEC,
