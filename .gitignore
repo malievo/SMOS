@@ -21,5 +21,6 @@ system/core/module_init/output/*
 system/core/tasks/*
 system/core/goals/*
 system/swl/output/*
+system/launcher/run/*
 logs/raw/*
 !**/.gitkeep
