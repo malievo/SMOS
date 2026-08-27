@@ -120,7 +120,7 @@ def process_goal_file(goal_file: Path, graph: dict) -> None:
         return
 
     source_text = spec.get("source_text")
-    task_id = task_runner.create_task(goal, state, graph)
+    task_id = task_runner.create_task(goal, state, graph, source_text)
     goal_file.unlink(missing_ok=True)
 
     send_log("INFO", "goal_dispatched", {
