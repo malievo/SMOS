@@ -216,4 +216,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        log_client.send_log("INFO", "req_stopped")
+        print("\n[req] остановлен")
