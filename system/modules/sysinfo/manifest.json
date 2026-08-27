@@ -1,0 +1,14 @@
+{
+  "name": "mod_sysinfo",
+  "description": "Настоящие показатели хост-машины: загрузка (loadavg), память, использование диска, аптайм, число ядер, платформа. Читает /proc и стандартную библиотеку, без внешних зависимостей.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "get_system_stats",
+      "description": "Снимок текущего состояния машины",
+      "needs": [],
+      "produces": ["system_stats"],
+      "cost": 1
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "mod_journal",
+  "description": "Пишет снимок состояния системы в журнал data/journal.jsonl. Сам ничего не собирает — потребляет current_datetime и system_stats от других модулей, поэтому цель journal_written требует многошагового графа.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "write_snapshot",
+      "description": "Записать в журнал строку с датой/временем и показателями машины",
+      "needs": ["current_datetime", "system_stats"],
+      "produces": ["journal_written"],
+      "cost": 1
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "mod_notes",
+  "description": "Заметки пользователя на диске. add_note дописывает заметку в data/notes.jsonl, list_notes возвращает все сохранённые заметки. Настоящий побочный эффект на файловой системе.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "add_note",
+      "description": "Сохранить новую заметку",
+      "needs": ["note_text"],
+      "produces": ["note_saved"],
+      "cost": 1
+    },
+    {
+      "command": "list_notes",
+      "description": "Вернуть все сохранённые заметки",
+      "needs": [],
+      "produces": ["notes_list"],
+      "cost": 1
+    }
+  ]
+}

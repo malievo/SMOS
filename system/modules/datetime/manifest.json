@@ -1,0 +1,14 @@
+{
+  "name": "mod_datetime",
+  "description": "Настоящие текущие дата и время машины (дата, время, день недели, таймзона, unix-время). В отличие от тестового модуля clock — реальные данные.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "get_datetime",
+      "description": "Возвращает текущие дату и время в разложенном виде",
+      "needs": [],
+      "produces": ["current_datetime"],
+      "cost": 1
+    }
+  ]
+}

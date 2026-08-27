@@ -1,0 +1,14 @@
+{
+  "name": "mod_calc",
+  "description": "Калькулятор арифметических выражений. Разбирает выражение через ast и вычисляет обходом дерева (без eval); разрешены арифметика, скобки, унарный минус и функции/константы из math.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "evaluate",
+      "description": "Вычисляет арифметическое выражение, переданное строкой",
+      "needs": ["expression"],
+      "produces": ["calc_result"],
+      "cost": 1
+    }
+  ]
+}
