@@ -22,6 +22,8 @@ system/core/module_init/output/*
 system/core/tasks/*
 system/core/goals/*
 system/outputstructurizer/queue/*
+system/outputstructurizer/output/*
+system/audio/tasks/*
 system/swl/output/*
 system/launcher/run/*
 logs/raw/*

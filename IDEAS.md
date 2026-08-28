@@ -8,15 +8,21 @@
 
 ---
 
-## Замыкание цикла: responder (следующая задача, отдельный чат)
+## Замыкание цикла: responder — СДЕЛАНО (2026-08-28)
 
-Ядро считает результат в `system/core/tasks/<id>/state.json`, и его
-никто не озвучивает. Нужен маленький `system/audio/responder.py`:
-поллит `tasks/`, на `done`/`error` — говорит ответ через `spd-say`.
+Построены `system/outputstructurizer/` (результат задачи → человеческая
+фраза: готовый шаблон → GigaChat-формулировщик → сырой fallback) и
+`system/audio/` v1 (`spd-say`). Сквозной путь «фраза → … → озвученный
+ответ» замкнут.
 
-Готовый план с развилкой по формулировке ответа —
-[`system/audio/audio_design.md`](system/audio/audio_design.md), раздел
-«v1: responder».
+Подробно:
+[`system/outputstructurizer/outputstructurizer_design.md`](system/outputstructurizer/outputstructurizer_design.md),
+[`system/audio/audio_design.md`](system/audio/audio_design.md) (раздел
+«v1: замыкание цикла»).
+
+Осталось на потом: поле `speech` от модулей (точный дословный путь),
+`goal: null` от SWL, дистилляция формулировщика, полный аудио-демон
+(приоритеты, музыка, приглушение).
 
 ## responder v2: формулировку ответа отдать ветке chat
 
