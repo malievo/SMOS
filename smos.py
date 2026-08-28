@@ -14,6 +14,8 @@ smos.py — единая точка входа SMOS: preflight-проверка,
 Процессы SMOS (см. system/core/how_core_works.md, system/swl/swl_design.md):
   logs       logs/listener/listener.py            демон логов (UDP) — первым
   core       system/core/core.py                  ядро: очередь целей -> задачи
+  outputstructurizer  system/outputstructurizer/outputstructurizer.py  результат задачи -> человеческая фраза
+  audio      system/audio/audio.py                фраза -> озвучка (spd-say), v1
   swl        system/swl/swl.py                    команда -> структурированная цель
   classifier system/fwl/classifier/classifier.py  команда / разговор
   req        system/fwl/rvs/req.py                запись фразы -> текст (Google STT)
@@ -82,6 +84,8 @@ class Proc:
 PROCESSES = [
     Proc("logs", "logs/listener/listener.py"),
     Proc("core", "system/core/core.py"),
+    Proc("outputstructurizer", "system/outputstructurizer/outputstructurizer.py", ["gigachat", "dotenv"]),
+    Proc("audio", "system/audio/audio.py"),
     Proc("swl", "system/swl/swl.py", ["gigachat", "dotenv"]),
     Proc("classifier", "system/fwl/classifier/classifier.py",
          ["gigachat", "dotenv", "sentence_transformers", "sklearn", "joblib", "numpy"]),

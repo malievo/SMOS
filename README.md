@@ -6,9 +6,9 @@
 Raspberry Pi, и на сервере без экрана.
 
 > **Статус:** в активной разработке. Сквозной путь «голос → распознавание →
-> классификация → цель → выполнение» работает, за ним стоят настоящие модули
-> (дата/время, показатели машины, калькулятор, заметки, журнал). Многое ещё
-> не построено — см. [Состояние](#состояние).
+> классификация → цель → выполнение → озвученный ответ» работает, за ним
+> стоят настоящие модули (дата/время, показатели машины, калькулятор,
+> заметки, журнал). Многое ещё не построено — см. [Состояние](#состояние).
 
 ## Идея
 
@@ -55,6 +55,12 @@ Raspberry Pi, и на сервере без экрана.
                      system/modules/*                user/modules/*
                 (calc, datetime, sysinfo,           (личные модули
                  notes, journal + тестовые)          пользователя)
+                            │
+                   ┌────────┴──────── выходная сторона ────────────────┐
+                   │  outputstructurizer  результат задачи → фраза     │
+                   │                      (готовый шаблон / GigaChat)  │
+                   │  audio (v1)          фраза → Google TTS → произнесено │
+                   └──────────────────────────────────────────────────┘
 
   Все процессы → logs/listener  (UDP :47110, fire-and-forget)
                  → logs/raw/<module>/events.jsonl
@@ -85,10 +91,15 @@ Raspberry Pi, и на сервере без экрана.
 | CORE: реестр модулей + GOAP-планировщик + task runner | ✅ проверено end-to-end, включая многошаговые цепочки |
 | Модули: 5 реальных (`mod_*`) + 5 тестовых фикстур | ✅ |
 | Личные папки данных модулей (`user/module_data/<name>/`) | ✅ |
+| ВЫХОД: `outputstructurizer` (результат задачи → фраза, 3 слоя: шаблон → GigaChat → сырой fallback) | ✅ v1, проверено end-to-end |
+| ВЫХОД: `system/audio/` v1 (фраза → озвучка; движки: Google TTS `gtts` по умолчанию / `spd-say`) | ✅ v1 |
 | Логирование (`logs/`) | ✅ работает |
 | Единый запуск/остановка (`smos.py`) | ✅ |
 | Аналитический слой поверх сырых логов | ⛔ не построен |
 | Ветка «разговор» (`label == "chat"`) | ⛔ не обрабатывается |
+| Полный аудио-демон (приоритетная очередь, музыка, приглушение) | ⛔ пока только v1 «сказать текст» |
+| Поле `speech` от модулей (точная дословная формулировка) | ⛔ не делали в v1 выхода |
+| Дистилляция формулировщика `outputstructurizer` в локальную модель | ⛔ датасет копится, цикл — потом |
 | Дистилляция SWL в локальную модель | ⛔ план есть, пока только накопление датасета |
 | Определение зависшего модуля по heartbeat | ⛔ пока жёсткий таймаут 5 c |
 | Долгая память / персона, проактивность (напоминания, ambient-звук) | ⛔ не начаты |
@@ -128,6 +139,9 @@ system/
     module_init/   скан модулей, валидация манифестов, граф needs/produces
     planner/       GOAP-разрешение цели (achieve)
     task_runner/   поток на задачу, статус в tasks/<id>/state.json
+  outputstructurizer/  результат задачи → человеческая фраза
+                       (шаблон phrases.json / GigaChat-формулировщик)
+  audio/        озвучка, v1: заявки в tasks/ → Google TTS (gtts) / spd-say
   modules/      модули, поставляемые с репозиторием
   launcher/     рантайм-состояние smos.py (system/launcher/run/)
 logs/
@@ -148,8 +162,14 @@ user/           данные пользователя (в .gitignore, кроме
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install openwakeword pyaudio SpeechRecognition gigachat python-dotenv \
-            scikit-learn sentence-transformers joblib numpy scipy
+            scikit-learn sentence-transformers joblib numpy scipy gtts
 ```
+
+Озвучка ответа (`system/audio/`) по умолчанию идёт через Google TTS
+(`gtts`, онлайн) + MP3-плеер — поставь `gst-play-1.0` (пакет
+`gstreamer1.0-tools`), либо `mpg123`/`ffplay` и укажи его в
+`user/configs/audio.json` → `tts.gtts.player`. Оффлайн-альтернатива —
+`tts.engine: "spd-say"` (speech-dispatcher).
 
 Ключ GigaChat (нужен для bootstrap-этапов классификатора и SWL) — в
 `user/.env`:
@@ -176,6 +196,16 @@ GIGACHAT_CREDENTIALS=<ваш ключ>
 ```bash
 .venv/bin/python system/swl/swl.py "запиши снимок системы в журнал"
 # фраза → GigaChat → цель → очередь ядра → планировщик → mod_datetime + mod_sysinfo → mod_journal
+# → outputstructurizer (фраза) → system/audio/ (озвучка), если запущены
+```
+
+Только выходную сторону (без SWL и микрофона) — положить файл-результат
+прямо в очередь `outputstructurizer`:
+
+```bash
+echo '{"task_id":"manual_1","goal":"calc_result","status":"done","result":{"expression":"2+2","value":4},"state":{},"source_text":"посчитай"}' \
+  > system/outputstructurizer/queue/manual_1.json
+# outputstructurizer подхватит (если запущен ПОСЛЕ появления файла) → фраза → system/audio/tasks/
 ```
 
 Настройки — в `user/configs/*.json`. Любой файл можно удалить: процесс

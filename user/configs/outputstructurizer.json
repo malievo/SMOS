@@ -1,0 +1,33 @@
+{
+  "_comment": "Настройки outputstructurizer (SMOS) — этап между ядром и озвучкой: из результата выполненной команды делает фразу для человека. Меняй значения и перезапускай outputstructurizer.py. Любое поле можно удалить — тогда берётся значение по умолчанию из config.py (DEFAULTS). Поля \"_comment\" скрипт не использует. Таблица готовых фраз — это НЕ здесь, а в system/outputstructurizer/phrases.json (контент, не настройки).",
+
+  "check_interval_sec": 0.3,
+
+  "ai": {
+    "_comment": "GigaChat как формулировщик ответа на bootstrap-этапе, когда готовой фразы под goal-ключ нет (см. outputstructurizer_design.md). Те же ключи, что у классификатора и SWL. temperature повыше нуля — нужен связный короткий ответ; max_tokens мал — это одна фраза для озвучки.",
+    "model": "GigaChat-2",
+    "temperature": 0.3,
+    "max_tokens": 120,
+    "verify_ssl_certs": false
+  },
+
+  "phrasing": {
+    "_comment": "Последний слой fallback — когда нет ни готовой фразы, ни доступного формулировщика (нет ключа/сети). Гарантирует, что ответ уйдёт всегда. random_variants — брать случайный вариант, если в phrases.json под ключ задан список.",
+    "error_fallback_template": "Не удалось выполнить: {error}",
+    "result_fallback_template": "Готово: {result}",
+    "random_variants": true
+  },
+
+  "privilege_level": 2,
+
+  "paths": {
+    "_comment": "queue_dir — вход (сюда пишет ядро/task_runner), относительно папки со скриптом. audio_tasks_dir — выход (заявки на озвучку), относительно неё же. phrases_file — поставляемая таблица фраз рядом со скриптом. rejected/stale — подпапки queue_dir.",
+    "queue_dir": "queue",
+    "rejected_subdir": "rejected",
+    "stale_subdir": "stale",
+    "audio_tasks_dir": "../audio/tasks",
+    "phrases_file": "phrases.json",
+    "output_dir": "output",
+    "dataset_file": "dataset.jsonl"
+  }
+}

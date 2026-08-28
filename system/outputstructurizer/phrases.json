@@ -1,0 +1,29 @@
+{
+  "_comment": "Готовые фразы outputstructurizer. Ключ = goal-ключ из манифеста модуля (то, что модуль объявляет в produces). Значение = строка-шаблон ИЛИ список строк-шаблонов (тогда берётся случайный, если phrasing.random_variants=true в user/configs/outputstructurizer.json). Подстановка через str.format по именам: result (значение цели), state (всё накопленное состояние задачи), source_text (исходная фраза пользователя), goal. Пример: \"Сейчас {result[time]}\". Если шаблон ссылается на несуществующее поле — запись пропускается, ответ формулирует GigaChat. Ключ \"_error\" — фраза для невыполненной команды (status==error), {error} подставляется. Это контент, не настройки: правится руками, лежит под гитом. Слой 1 из трёх (готовая фраза -> GigaChat -> сырой результат), см. outputstructurizer_design.md.",
+
+  "_error": [
+    "Не получилось: {error}",
+    "Не смог выполнить: {error}"
+  ],
+
+  "current_datetime": [
+    "Сейчас {result[time]}, {result[weekday]}",
+    "{result[weekday]}, {result[time]}"
+  ],
+  "calc_result": [
+    "{result[expression]} — это {result[value]}",
+    "Получается {result[value]}"
+  ],
+  "note_saved": [
+    "Записал.",
+    "Заметка сохранена.",
+    "Готово, записал."
+  ],
+  "journal_written": [
+    "Снимок записан в журнал.",
+    "Записал снимок состояния системы."
+  ],
+  "echoed_text": "{result}",
+  "greeting_text": "{result}",
+  "farewell_text": "{result}"
+}

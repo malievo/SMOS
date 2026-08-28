@@ -1,0 +1,33 @@
+{
+  "_comment": "Настройки аудио-демона SMOS v1 («сказать текст»). Меняй значения и перезапускай audio.py. Любое поле можно удалить — тогда берётся значение по умолчанию из config.py (DEFAULTS). Поля \"_comment\" скрипт не использует. Полный аудио-демон (приоритеты, музыка, приглушение) — см. system/audio/audio_design.md, здесь не реализован.",
+
+  "check_interval_sec": 0.3,
+
+  "tts": {
+    "_comment": "engine — первичный движок синтеза: \"gtts\" (Google TTS, синтез MP3 через интернет + внешний плеер) или \"spd-say\" (speech-dispatcher, локально/оффлайн). fallback_engine пробуется, если первичный не сработал (нет пакета/сети/плеера); \"\" — сразу печатать текст. enabled=false — только печать. Любой сбой синтеза не роняет демон.",
+    "enabled": true,
+    "engine": "gtts",
+    "fallback_engine": "spd-say",
+
+    "gtts": {
+      "_comment": "Нужен `pip install gtts` и MP3-плеер. player — чем проиграть готовый MP3, путь к временному файлу добавляется последним аргументом. По умолчанию gst-play-1.0 (пакет gstreamer1.0-tools). Альтернативы: [\"mpg123\",\"-q\"] или [\"ffplay\",\"-nodisp\",\"-autoexit\",\"-loglevel\",\"quiet\"]. tld — домен голоса Google (com, ru, co.uk…).",
+      "lang": "ru",
+      "tld": "com",
+      "slow": false,
+      "player": ["gst-play-1.0", "--quiet"],
+      "timeout_sec": 30
+    },
+
+    "spd_say": {
+      "_comment": "speech-dispatcher: локально, оффлайн, без зависимостей питона. Текст добавляется последним аргументом.",
+      "command": ["spd-say", "-w", "-l", "ru"],
+      "timeout_sec": 30
+    }
+  },
+
+  "paths": {
+    "_comment": "tasks_dir — вход (сюда пишет outputstructurizer), относительно папки с audio.py. rejected — подпапка tasks_dir. Обе — рантайм-данные, в .gitignore.",
+    "tasks_dir": "tasks",
+    "rejected_subdir": "rejected"
+  }
+}
