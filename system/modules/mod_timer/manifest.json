@@ -1,0 +1,15 @@
+{
+  "name": "mod_timer",
+  "description": "Голосовой таймер: ставит обратный отсчёт, по истечении ассистент сам озвучивает напоминание.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {
+      "command": "set_timer",
+      "description": "Поставить таймер на заданную длительность (например '10 минут', '1 час 30 минут', '45 секунд'). По истечении времени ассистент сам сообщит.",
+      "needs": ["timer_duration"],
+      "produces": ["timer_set"],
+      "session": true,
+      "cost": 1
+    }
+  ]
+}

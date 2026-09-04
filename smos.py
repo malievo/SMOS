@@ -154,6 +154,45 @@ def stop_pid(pid: int, match: str, label: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# Сессии (долгоживущие модули: таймер, музыка, ...)
+# --------------------------------------------------------------------------
+
+SESSIONS_DIR = PROJECT_ROOT / "system" / "core" / "sessions"
+
+
+def read_sessions() -> list[dict]:
+    """Живые записи сессий из system/core/sessions/<id>/state.json.
+    Сессию порождает точка входа сессионного модуля (см.
+    system/core/core_design.md, раздел «Долгоживущие модули»); ядро её
+    не держит в памяти — только файл. Пока это скан папки, а не чтение
+    реестра: registry поле `session` в v1 не пробрасывает."""
+    out = []
+    if not SESSIONS_DIR.exists():
+        return out
+    for st in sorted(SESSIONS_DIR.glob("*/state.json")):
+        try:
+            info = json.loads(st.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        info["_dir"] = st.parent.name
+        out.append(info)
+    return out
+
+
+def stop_sessions() -> None:
+    """Гасит все живые сессии — тем же путём, что и обычные процессы
+    (SIGINT -> SIGTERM -> SIGKILL), pid берётся из их state.json."""
+    live = [s for s in read_sessions()
+            if s.get("status") == "running" and s.get("pid") and is_alive(s["pid"])]
+    if not live:
+        return
+    print(f"[smos] гашу сессии: {', '.join(s.get('module', s['_dir']) for s in live)}")
+    for s in live:
+        res = stop_pid(s["pid"], "", s.get("module", s["_dir"]))
+        print(f"  сессия {s['_dir']:<24} pid {s['pid']:<8} {res}")
+
+
+# --------------------------------------------------------------------------
 # Состояние на диске
 # --------------------------------------------------------------------------
 
@@ -378,6 +417,7 @@ def start_merged(selected: list[Proc], auto_restart: bool) -> None:
             break
 
     _shutdown_merged(children)
+    stop_sessions()
     clear_state()
 
 
@@ -479,6 +519,7 @@ def cmd_stop() -> None:
         if tmux_has_session():
             print(f"[smos] но сессия tmux '{TMUX_SESSION}' жива — гашу её")
             stop_tmux_session()
+        stop_sessions()  # осиротевший таймер мог пережить исчезновение state.json
         return
 
     print(f"[smos] останавливаю (режим {state['mode']}, старт {state.get('started_at', '?')})")
@@ -494,6 +535,7 @@ def cmd_stop() -> None:
                 os.kill(lp, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+    stop_sessions()
     clear_state()
     print("[smos] готово")
 
@@ -512,6 +554,15 @@ def cmd_status() -> None:
         live = is_alive(info["pid"], info.get("cmdline_match", ""))
         print(f"  {name:<10} pid {info['pid']:<8} "
               f"{'РАБОТАЕТ' if live else 'мёртв   '}  {uptime(info.get('started_at', ''))}")
+
+    sessions = read_sessions()
+    if sessions:
+        print("сессии:")
+        for s in sessions:
+            live = s.get("pid") and is_alive(s["pid"])
+            mark = "РАБОТАЕТ" if (live and s.get("status") == "running") else s.get("status", "?")
+            extra = f"  сработает {s['fire_at']}" if s.get("fire_at") and s.get("status") == "running" else ""
+            print(f"  {s.get('module', s['_dir']):<12} {s['_dir']:<24} pid {s.get('pid', '?'):<8} {mark}{extra}")
 
 
 # --------------------------------------------------------------------------
