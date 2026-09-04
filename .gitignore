@@ -21,7 +21,6 @@ system/fwl/classifier/flags/*
 system/core/module_init/output/*
 system/core/tasks/*
 system/core/goals/*
-system/core/sessions/*
 system/outputstructurizer/queue/*
 system/outputstructurizer/output/*
 system/audio/tasks/*

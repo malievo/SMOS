@@ -23,14 +23,6 @@
     "Снимок записан в журнал.",
     "Записал снимок состояния системы."
   ],
-  "timer_set": [
-    "Таймер на {result[human]} поставлен.",
-    "Поставил таймер на {result[human]}."
-  ],
-  "timer_elapsed": [
-    "Таймер на {result[human]}.",
-    "Время вышло. Таймер на {result[human]}."
-  ],
   "echoed_text": "{result}",
   "greeting_text": "{result}",
   "farewell_text": "{result}"
