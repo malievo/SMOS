@@ -34,6 +34,7 @@ listener.py — демон-приёмник логов SMOS.
 import json
 import socket
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -59,6 +60,17 @@ VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 DEFAULT_LEVEL = "INFO"
 
 MAX_PACKET_SIZE = 65536  # с запасом хватает на любое разумное лог-событие с data
+
+# Найдено на практике (2026-09-05, при разработке апдейтера): при быстром
+# перезапуске всей системы (apply гасит смос и тут же поднимает новый,
+# которому нужен свой logs первым) новый bind() иногда попадает в момент,
+# когда предыдущий экземпляр этого же демона ещё не успел закрыть сокет
+# (SIGINT доставлен, но процесс физически ещё завершается) — тогда
+# "Address already in use" валит демон мгновенно, ДО того как порт
+# реально освободится. Несколько попыток с паузой вместо немедленного
+# падения — окно с большим запасом на любой разумный сценарий.
+BIND_RETRY_ATTEMPTS = 20
+BIND_RETRY_DELAY_SEC = 0.25
 
 
 def handle_packet(raw_bytes: bytes, addr) -> None:
@@ -103,11 +115,26 @@ def handle_packet(raw_bytes: bytes, addr) -> None:
     print(f"[logs] {module} [{level}] {message}")
 
 
+def _bind_with_retry(sock: socket.socket) -> None:
+    """bind() с несколькими попытками — см. BIND_RETRY_ATTEMPTS выше.
+    Порт может на короткое время оставаться занятым предыдущим
+    экземпляром этого же демона, который ещё не успел закрыть сокет."""
+    for attempt in range(1, BIND_RETRY_ATTEMPTS + 1):
+        try:
+            sock.bind((HOST, PORT))
+            return
+        except OSError as e:
+            if attempt == BIND_RETRY_ATTEMPTS:
+                raise
+            print(f"[logs] порт {HOST}:{PORT} занят ({e}), попытка {attempt}/{BIND_RETRY_ATTEMPTS}...")
+            time.sleep(BIND_RETRY_DELAY_SEC)
+
+
 def main() -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((HOST, PORT))
+    _bind_with_retry(sock)
     print(f"[logs] Запущен. Слушаю {HOST}:{PORT}...")
 
     try:

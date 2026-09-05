@@ -25,6 +25,25 @@ system/outputstructurizer/queue/*
 system/outputstructurizer/output/*
 system/audio/tasks/*
 system/swl/output/*
-system/launcher/run/*
 logs/raw/*
+
+# system/sysaudio/: clips/ коммитятся (ассеты), а models/ — локальный кэш
+# голосовой модели Piper (~60 МБ, качается generate.py), voice_samples/ —
+# временная папка сравнения голосов. См. system/sysaudio/sysaudio_design.md.
+system/sysaudio/models/*
+system/sysaudio/voice_samples/*
+system/sysaudio/tasks/*
+
+# рантайм-состояние launcher'а и апдейтера — вне system/ намеренно (см.
+# updater/updater_design.md), но всё равно не исходный код
+launcher/run/*
+updater/backup/*
+updater/tmp_download.zip
+updater/tmp_extract/*
+updater/state.json
+updater/dialog_procs.json
+updater/history.jsonl
+updater/apply_output.log
+updater/restart_output.log
+
 !**/.gitkeep

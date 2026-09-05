@@ -8,8 +8,12 @@ smos.py — единая точка входа SMOS: preflight-проверка,
 его папку и запускать скрипт — минут семь только на старт. Этот скрипт
 поднимает всех сразу, в нужном порядке, и гасит одной командой — в том
 числе из ДРУГОЙ консоли и даже если сам launcher уже закрыт: состояние
-лежит в system/launcher/run/state.json, так что осиротевший wake.py на
-микрофоне всегда убирается через `python smos.py stop`.
+лежит в launcher/run/state.json (НЕ в system/ — эта папка целиком
+заменяется при обновлении апдейтером, см. updater/updater_design.md;
+живи это состояние внутри system/, updater/apply стирал бы или
+откатывал его при каждом обновлении, и smos.py "терял" бы из виду уже
+запущенные процессы), так что осиротевший wake.py на микрофоне всегда
+убирается через `python smos.py stop`.
 
 Процессы SMOS (см. system/core/how_core_works.md, system/swl/swl_design.md):
   logs       logs/listener/listener.py            демон логов (UDP) — первым
@@ -21,12 +25,27 @@ smos.py — единая точка входа SMOS: preflight-проверка,
   req        system/fwl/rvs/req.py                запись фразы -> текст (Google STT)
   wake       system/fwl/rvs/wake.py              wake-word + запись, владелец микрофона
 
+Перед стартом остальных процессов (см. updater/updater_design.md):
+  1. Поднимается logs (нужен апдейтеру для логирования себя, как и всем).
+  2. Блокирующий вызов updater/updater.py check — сверяет версию с GitHub,
+     при необходимости сам ведёт голосовое подтверждение: вопрос и
+     объявления — готовые клипы system/sysaudio/ (play_clip, отдельным
+     процессом), да/нет/отмена слушает через wake --nowake + req. Пути
+     ко всем этим скриптам передаются апдейтеру через окружение
+     (SMOS_*_SCRIPT) — smos.py остаётся единственным источником правды
+     о раскладке system/, апдейтер её не дублирует.
+  3. Результат: "updating" -> smos.py ничего больше не запускает и
+     завершается (apply сам поднимет smos.py заново); "no_update" /
+     "declined" -> обычный запуск всех процессов продолжается.
+  --no-update пропускает эту проверку целиком.
+
 Команды:
-  python smos.py                      preflight + запуск всех; общий вывод, Ctrl+C гасит всех
+  python smos.py                      preflight + проверка обновления + запуск всех; общий вывод, Ctrl+C гасит всех
   python smos.py start --debugview    то же, но каждый процесс в своей панели tmux
   python smos.py start --only swl,core   поднять только перечисленные
   python smos.py start --skip wake,req   поднять все, кроме перечисленных
   python smos.py start --restart      поднимать упавший процесс заново (в merged — с backoff)
+  python smos.py start --no-update    пропустить проверку обновления
   python smos.py stop                 погасить всё, что запускал launcher
   python smos.py status              кто жив, pid, uptime, режим классификатора
   python smos.py restart [флаги start]
@@ -43,6 +62,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -56,11 +76,71 @@ if not (PROJECT_ROOT / "smos.root").exists():
     sys.exit("[smos] smos.py должен лежать в корне проекта (рядом с файлом-маркером smos.root)")
 
 PYCHILD = sys.executable  # тем же интерпретатором запускаем всех детей — venv наследуется
-RUN_DIR = PROJECT_ROOT / "system" / "launcher" / "run"
+
+# "Голос системы" (см. system/sysaudio/sysaudio_design.md) — вызывается
+# отдельным процессом, той же схемой, что и все остальные компоненты
+# SMOS (не in-process импортом — тот вариант архитектурно выбивался и
+# на практике сразу дал коллизию модулей config/log_client между
+# updater.py и sysaudio.py, см. updater_design.md).
+SYSAUDIO_SCRIPT = PROJECT_ROOT / "system" / "sysaudio" / "sysaudio.py"
+
+
+def play_clip(key: str, wait: bool = True) -> None:
+    """Проигрывает системный клип sysaudio.py. wait=True — дождаться
+    конца проигрывания; wait=False — не ждать. Любой сбой (нет скрипта,
+    не запустился) — только в консоль, не роняет smos.py."""
+    if not SYSAUDIO_SCRIPT.exists():
+        print(f"[smos] sysaudio недоступен ({SYSAUDIO_SCRIPT}) — {key!r} только в лог")
+        return
+    try:
+        if wait:
+            subprocess.run(
+                [PYCHILD, str(SYSAUDIO_SCRIPT), key], cwd=str(SYSAUDIO_SCRIPT.parent), timeout=20,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        else:
+            # DEVNULL, не унаследованные — та же гигиена, что и у
+            # updater.py play_clip/apply/_restart_smos (см.
+            # updater_design.md, «Гонка за stdout/stderr при
+            # capture_output»): здесь smos.py сам верхнеуровневый, так
+            # что зависания не будет, но пусть привычка не заводит хвост.
+            subprocess.Popen(
+                [PYCHILD, str(SYSAUDIO_SCRIPT), key], cwd=str(SYSAUDIO_SCRIPT.parent),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"[smos] не удалось проиграть клип {key!r}: {e}")
+
+
+# ВАЖНО: вне system/ (см. докстринг модуля) — updater/apply целиком
+# заменяет system/ при обновлении, и живи это состояние внутри неё,
+# каждое обновление стирало бы/откатывало bookkeeping о том, что уже
+# запущено (обнаружено на практике при разработке апдейтера).
+RUN_DIR = PROJECT_ROOT / "launcher" / "run"
 STATE_FILE = RUN_DIR / "state.json"
 TMUX_SESSION = "smos"
 
 PRINT_LOCK = threading.Lock()
+
+LOG_HOST = "127.0.0.1"
+LOG_PORT = 47110
+
+
+def send_log(level: str, message: str, data: dict | None = None) -> None:
+    """Тот же протокол, что и у log_client.py в каждом модуле (см.
+    logs/PROTOCOL.md) — здесь встроено прямо в smos.py, а не отдельным
+    файлом, потому что smos.py не модуль в system/, а сам процесс
+    запуска. Единственный, кому это сейчас нужно от smos.py, —
+    all_system_started ниже: апдейтер следит за ним при health-check
+    после обновления (см. updater/updater_design.md)."""
+    payload = {"module": "smos", "level": level, "message": message}
+    if data:
+        payload["data"] = data
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"), (LOG_HOST, LOG_PORT))
+    except (OSError, TypeError, ValueError):
+        pass  # логирование не должно ронять launcher — ни из-за сети, ни из-за странных типов в data
 
 
 @dataclass
@@ -293,6 +373,74 @@ def select_processes(only: str, skip: str) -> list[Proc]:
 
 
 # --------------------------------------------------------------------------
+# Проверка обновления (updater/updater.py check) — до запуска остальных
+# процессов. См. updater/updater_design.md.
+# --------------------------------------------------------------------------
+
+UPDATER_SCRIPT = PROJECT_ROOT / "updater" / "updater.py"
+# Щедрый потолок на весь вызов check (включая возможный голосовой диалог) —
+# предохранитель на случай, если что-то внутри апдейтера зависло; сам
+# апдейтер должен укладываться в свои внутренние таймауты намного раньше.
+UPDATE_CHECK_TIMEOUT_SEC = 180
+
+
+def run_update_check(selected: list[Proc]) -> str:
+    """Блокирующий вызов updater.py check. Возвращает "no_update" /
+    "declined" / "updating" — при любой накладке (апдейтера нет, упал,
+    вернул не то, завис) безопасный дефолт "no_update", чтобы сбой
+    проверки обновления никогда не мешал обычному запуску системы.
+
+    Поднимает logs на время проверки (апдейтеру нужно кому-то
+    логировать себя), если logs вообще есть в selected — временный
+    процесс, не входит в state.json, гасится перед возвратом; ниже по
+    списку PROCESSES его поднимет обычный start_merged/start_tmux."""
+    if not UPDATER_SCRIPT.exists():
+        return "no_update"
+
+    logs_def = BY_NAME.get("logs")
+    logs_child = None
+    if logs_def is not None and any(p.name == "logs" for p in selected):
+        print("[smos] запускаю logs (нужен апдейтеру для логирования)...")
+        logs_child = _spawn_merged(logs_def)
+        time.sleep(0.7)
+
+    env = {
+        **os.environ,
+        "SMOS_PYTHON": PYCHILD,
+        "SMOS_SYSAUDIO_SCRIPT": str(SYSAUDIO_SCRIPT),
+    }
+    for env_key, proc_name in (
+        ("SMOS_WAKE_SCRIPT", "wake"), ("SMOS_REQ_SCRIPT", "req"),
+    ):
+        proc_def = BY_NAME.get(proc_name)
+        if proc_def is not None:
+            env[env_key] = str(proc_def.abspath)
+
+    print("[smos] проверяю обновления...")
+    outcome = "no_update"
+    try:
+        result = subprocess.run(
+            [PYCHILD, str(UPDATER_SCRIPT), "check"],
+            cwd=str(UPDATER_SCRIPT.parent),
+            env=env, capture_output=True, text=True, timeout=UPDATE_CHECK_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"[smos] проверка обновления не уложилась в {UPDATE_CHECK_TIMEOUT_SEC}с — пропускаю")
+    else:
+        for line in result.stderr.splitlines():
+            print(f"updater    │ {line}")
+        try:
+            outcome = json.loads(result.stdout.strip())["result"]
+        except (json.JSONDecodeError, KeyError, AttributeError):
+            print(f"[smos] апдейтер вернул непонятный ответ (stdout={result.stdout!r}) — пропускаю")
+
+    if logs_child is not None:
+        _shutdown_merged({"logs": logs_child})
+
+    return outcome
+
+
+# --------------------------------------------------------------------------
 # start: merged (общий вывод в одну консоль)
 # --------------------------------------------------------------------------
 
@@ -347,6 +495,23 @@ def start_merged(selected: list[Proc], auto_restart: bool) -> None:
         time.sleep(0.7 if p.name == "logs" else 0.3)
 
     print("[smos] все запущены. Ctrl+C — остановить всех.\n")
+
+    # Живы ли все сразу после старта? Не то же самое, что "готовы" — просто
+    # "хотя бы не упали немедленно". Апдейтер следит именно за этим логом
+    # при health-check после обновления (см. updater/updater_design.md) —
+    # поэтому шлём его один раз, здесь, а не полагаемся на то, что кто-то
+    # другой досмотрит своё собственное состояние за всех. Секунда — и
+    # для этой проверки, и чтобы "система запущена" не звучало раньше,
+    # чем реально всё поднялось (см. system/sysaudio/sysaudio_design.md).
+    time.sleep(1.0)
+    alive_names = [p.name for p in selected if children.get(p.name) is not None and children[p.name].poll() is None]
+    if len(alive_names) == len(selected):
+        send_log("INFO", "all_system_started", {"processes": alive_names})
+        play_clip("system_started", wait=False)
+    else:
+        missing = [p.name for p in selected if p.name not in alive_names]
+        send_log("WARNING", "all_system_started_incomplete", {"missing": missing})
+
     restart_hist: dict[str, list[float]] = {p.name: [] for p in selected}
 
     while not stop_event.is_set():
@@ -448,6 +613,14 @@ def start_tmux(selected: list[Proc], auto_restart: bool, attach: bool, force: bo
     }
     save_state("tmux", procs_state, tmux_session=TMUX_SESSION)
 
+    # В отличие от start_merged, тут нет прямых Popen на каждый процесс,
+    # чтобы дёшево проверить .poll() — best-effort, без проверки живости
+    # (apply никогда не перезапускает smos.py в этом режиме, так что для
+    # health-check апдейтера это не критично, см. updater_design.md).
+    time.sleep(1.0)
+    send_log("INFO", "all_system_started", {"processes": [p.name for p in selected]})
+    play_clip("system_started", wait=False)
+
     print(f"[smos] сессия tmux '{TMUX_SESSION}' поднята — {len(selected)} панелей "
           f"({', '.join(p.name for p in selected)})")
     print(f"[smos] остановить:  python smos.py stop")
@@ -526,6 +699,7 @@ def add_start_flags(sp: argparse.ArgumentParser) -> None:
                     help="поднимать упавший процесс заново")
     sp.add_argument("--no-attach", action="store_true", help="--debugview: не подключаться к tmux сразу")
     sp.add_argument("--force", action="store_true", help="игнорировать уже запущенную сессию/состояние")
+    sp.add_argument("--no-update", action="store_true", help="пропустить проверку обновления")
 
 
 def run_start(args: argparse.Namespace) -> None:
@@ -541,6 +715,12 @@ def run_start(args: argparse.Namespace) -> None:
         if live or (existing["mode"] == "tmux" and tmux_has_session()):
             sys.exit(f"[smos] похоже, уже запущено ({', '.join(live) or 'tmux'}). "
                      f"`python smos.py stop` или `python smos.py start --force`")
+
+    if not args.no_update:
+        outcome = run_update_check(selected)
+        if outcome == "updating":
+            print("[smos] апдейтер применяет обновление — завершаюсь, дождитесь автоматического перезапуска")
+            return
 
     if args.debugview:
         start_tmux(selected, args.auto_restart, attach=not args.no_attach, force=args.force)

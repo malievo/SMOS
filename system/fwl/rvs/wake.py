@@ -63,6 +63,30 @@ wake.py — детекция активационного слова И запи
 flags/. (Позже, когда будешь оформлять по-нормальному, стоит вынести
 flags в общую папку модуля Ear, как обсуждали.)
 
+Флаг --nowake (добавлено 2026-09-05, для голосового диалога updater'а):
+    python wake.py --nowake
+
+Пропускает состояние "listening" в его обычном виде — модель
+openWakeWord вообще не загружается (не нужна, экономит время старта),
+активационное слово не ищется. Вместо этого в "listening" запись
+начинается сразу, как только громкость чанка превышает
+recording.energy_threshold — то есть от появления любой речи, без
+кодового слова. Дальше — та же самая, уже отлаженная механика записи
+(кольцевой буфер-довесок, определение конца фразы по тишине,
+предохранитель от бесконечной записи, атомарная запись
+flags/utterance.wav), req.py эту запись читает и распознаёт точно так
+же, как обычно, никаких изменений в req.py не потребовалось.
+
+Каждая записанная фраза уходит в flags/utterance.wav и скрипт
+возвращается ждать следующую — процесс не завершается сам, вызывающая
+сторона (сейчас — updater) должна остановить его сама, когда получила
+нужный ответ.
+
+Придумано как разовый механизм для апдейтера (спросить да/нет/отмена
+без необходимости говорить кодовое слово каждый раз), но заодно это и
+первый кирпичик к опциональному отключению активационного слова
+целиком, если пользователь захочет.
+
 Установка зависимостей:
     pip install openwakeword pyaudio numpy
 
@@ -194,10 +218,14 @@ def save_utterance(chunks) -> None:
 
 
 def main() -> None:
-    if MODEL_PATH:
-        model = Model(wakeword_model_paths=[str(MODEL_PATH)])
-    else:
-        model = Model()  # без аргумента -> загружаются ВСЕ встроенные предобученные модели (для теста)
+    nowake = "--nowake" in sys.argv[1:]
+
+    model = None
+    if not nowake:
+        if MODEL_PATH:
+            model = Model(wakeword_model_paths=[str(MODEL_PATH)])
+        else:
+            model = Model()  # без аргумента -> загружаются ВСЕ встроенные предобученные модели (для теста)
 
     audio = pyaudio.PyAudio()
     stream = audio.open(
@@ -208,8 +236,12 @@ def main() -> None:
         frames_per_buffer=CHUNK_SIZE,
     )
 
-    print("[wake] Запущен. Слушаю активационное слово (офлайн, без интернета)...")
-    log_client.send_log("INFO", "wake_started")
+    if nowake:
+        print("[wake] Запущен в режиме --nowake — жду речь без активационного слова...")
+        log_client.send_log("INFO", "wake_started", {"nowake": True})
+    else:
+        print("[wake] Запущен. Слушаю активационное слово (офлайн, без интернета)...")
+        log_client.send_log("INFO", "wake_started")
 
     state = "listening"  # "listening" | "recording"
     ring_buffer = collections.deque(maxlen=PREBUFFER_CHUNKS)  # кольцевой буфер последних PREBUFFER_SECONDS сек
@@ -227,32 +259,42 @@ def main() -> None:
 
             if state == "listening":
                 ring_buffer.append(raw_audio)
-                audio_chunk = np.frombuffer(raw_audio, dtype=np.int16)
-                predictions = model.predict(audio_chunk)
-
-                heard_word = None
-                heard_score = None
-                for wakeword, score in predictions.items():
-                    if score > DETECTION_THRESHOLD and (now - last_trigger_time) >= DETECTION_COOLDOWN:
-                        heard_word = wakeword
-                        heard_score = float(score)  # openWakeWord отдаёт numpy.float32 — не JSON-сериализуемо как есть
-                        break
 
                 start_recording = False
-                if heard_word is not None:
-                    last_trigger_time = now
-                    print(f"[wake] Услышал '{heard_word}' — начинаю запись фразы")
-                    log_client.send_log(
-                        "INFO", "wake_word_detected",
-                        {"wakeword": heard_word, "score": heard_score},
-                    )
-                    start_recording = True
-                elif now < continuation_until and _rms(raw_audio) > ENERGY_THRESHOLD:
-                    # Продолжение диалога: слово не звучало, но недавно было
-                    # успешное распознавание, и сейчас снова кто-то говорит.
-                    print("[wake] Продолжение диалога — начинаю запись фразы")
-                    log_client.send_log("INFO", "continuation_recording_started")
-                    start_recording = True
+                if nowake:
+                    # Без модели и без кодового слова: единственный триггер —
+                    # громкость чанка выше порога, тот же VAD, что определяет
+                    # конец фразы в "recording".
+                    if _rms(raw_audio) > ENERGY_THRESHOLD:
+                        print("[wake] Речь обнаружена (режим --nowake) — начинаю запись фразы")
+                        log_client.send_log("INFO", "nowake_recording_started")
+                        start_recording = True
+                else:
+                    audio_chunk = np.frombuffer(raw_audio, dtype=np.int16)
+                    predictions = model.predict(audio_chunk)
+
+                    heard_word = None
+                    heard_score = None
+                    for wakeword, score in predictions.items():
+                        if score > DETECTION_THRESHOLD and (now - last_trigger_time) >= DETECTION_COOLDOWN:
+                            heard_word = wakeword
+                            heard_score = float(score)  # openWakeWord отдаёт numpy.float32 — не JSON-сериализуемо как есть
+                            break
+
+                    if heard_word is not None:
+                        last_trigger_time = now
+                        print(f"[wake] Услышал '{heard_word}' — начинаю запись фразы")
+                        log_client.send_log(
+                            "INFO", "wake_word_detected",
+                            {"wakeword": heard_word, "score": heard_score},
+                        )
+                        start_recording = True
+                    elif now < continuation_until and _rms(raw_audio) > ENERGY_THRESHOLD:
+                        # Продолжение диалога: слово не звучало, но недавно было
+                        # успешное распознавание, и сейчас снова кто-то говорит.
+                        print("[wake] Продолжение диалога — начинаю запись фразы")
+                        log_client.send_log("INFO", "continuation_recording_started")
+                        start_recording = True
 
                 if start_recording:
                     state = "recording"

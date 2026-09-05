@@ -1,0 +1,33 @@
+Клипы системного аудио SMOS — как сгенерированы
+==============================================
+
+Пересобрать:  python3 system/sysaudio/generate.py
+Список/тексты — в PHRASES внутри generate.py (источник истины).
+
+Движок : Piper — нейросетевой TTS, локально, офлайн. pip install piper-tts
+Модель : ru_RU-dmitri-medium
+         huggingface.co/rhasspy/piper-voices  ru/ru_RU/dmitri/medium/
+         кэш в system/sysaudio/models/ (в .gitignore, не исходник)
+Формат : WAV, 22050 Гц, моно, 16 бит (как отдаёт Piper)
+Голос  : мужской, нейтральный. Намеренно НЕ голос ассистента
+         (system/audio/ -> gtts, женский) — чтобы на слух отличать
+         «говорит система» от «отвечает ассистент».
+Выбран : 2026-09-05, сравнив кандидатов в voice_samples/.
+
+clips/ru/<ключ>.wav:
+
+  system_started    «Система запущена.»
+  system_stopping   «Выключение системы.»
+  startup_failed    «Запуск не удался.»
+  update_available  «Доступно обновление. Обновить сейчас?»
+  update_started    «Обновление начато.»
+  update_applying   «Устанавливаю обновление.»
+  update_cancelled  «Обновление отменено.»
+  update_postponed  «Обновление отложено.»
+  update_failed     «Обновление не удалось.»
+  no_network        «Нет подключения к интернету.»
+  mic_unavailable   «Микрофон недоступен.»
+
+  lead_tone.wav  тон-префикс «говорит система» (две ноты, ~0.16 c), НЕ TTS.
+                 Генерируется generate.py. Заглушка — можно заменить
+                 своим звуком той же длины и частоты дискретизации.

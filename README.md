@@ -128,8 +128,14 @@ Raspberry Pi, и на сервере без экрана.
 ## Структура репозитория
 
 ```
-smos.py         единая точка входа: preflight, запуск и остановка всех процессов
+smos.py         единая точка входа: preflight, проверка обновления, запуск и остановка всех процессов
 smos.root       пустой файл-маркер корня проекта
+project_info.json  версия проекта + notes — сверяется апдейтером с GitHub
+launcher/       рантайм-состояние smos.py (launcher/run/state.json) — ВНЕ system/,
+                чтобы обновление его не стирало и не откатывало вместе с system/
+updater/        апдейтер: проверка версии, голосовое подтверждение, подмена
+                system/+smos.py, откат при сбое/health-check (см. updater_design.md).
+                Тоже вне system/ — не может безопасно заменить сам себя.
 system/
   fwl/          системные процессы первого цикла
     rvs/          wake.py, req.py — микрофон → текст
@@ -143,7 +149,6 @@ system/
                        (шаблон phrases.json / GigaChat-формулировщик)
   audio/        озвучка, v1: заявки в tasks/ → Google TTS (gtts) / spd-say
   modules/      модули, поставляемые с репозиторием
-  launcher/     рантайм-состояние smos.py (system/launcher/run/)
 logs/
   listener/     демон-приёмник логов (UDP :47110)
   PROTOCOL.md   как модулю слать события
