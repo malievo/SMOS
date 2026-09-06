@@ -28,11 +28,18 @@
     "max_utterance_seconds": 15
   },
 
+  "mute": {
+    "_comment": "Глушение входа: любой компонент SMOS кладёт flags/mute.flag, и wake на это время перестаёт слушать (озвучка ответа, критическая секция и т.п.) — иначе система слышит саму себя. Подробно — wake.py, функция mic_muted. Файл активен, пока писатель 'пульсирует' (трогает его чаще freshness_sec) либо пока не истёк {\"until\": unix-время} в его содержимом. Перестал трогать/упал -> глушение спадает через freshness_sec.",
+    "freshness_sec": 0.5,
+    "release_cooldown_sec": 0.5
+  },
+
   "paths": {
     "_comment": "Имена файлов/папок относительно папки со скриптами. Трогать без необходимости не стоит.",
     "flags_dir": "flags",
     "utterance_file": "utterance.wav",
     "activity_file": "activity.flag",
+    "mute_file": "mute.flag",
     "output_dir": "output",
     "output_file": "recognized.json",
     "debug_audio_dir": "debug_audio",

@@ -30,6 +30,21 @@ audio.py — аудио-демон SMOS, v1: «сказать текст».
 - На старте очередь НЕ чистит (в отличие от outputstructurizer): фильтр
   «протухших» ответов стоит выше, сюда попадает уже одобренное.
 
+Глушение микрофона на время воспроизведения (mute.flag, 2026-09-06):
+- Перед тем как произнести фразу, демон кладёт файл mute.flag в папку
+  системы распознавания (mute.flag_path, по умолчанию
+  system/fwl/rvs/flags/mute.flag), а после — убирает. Пока файл есть,
+  wake.py перестаёт слушать микрофон — иначе на высокой громкости
+  система слышит собственную озвучку, это уходит в распознавание и
+  зацикливается (ответ -> услышали -> команда -> снова ответ).
+- Пишется в режиме "until": в файле лежит момент, до которого глушить
+  (сейчас + предельная длительность фразы + запас). Даже если демон
+  упадёт, не сняв флаг, микрофон оглохнет ненадолго и сам отпустит —
+  чинить вручную не надо. Контракт файла — см. wake.py, mic_muted.
+- Ставит его только при реальной попытке синтеза (tts.enabled=true).
+  Пока писатель один; когда появится централизованная озвучка, флаг
+  станет её заботой.
+
 Запуск:
     python audio.py
 
@@ -68,6 +83,13 @@ TTS = CFG["tts"]
 TTS_ENABLED = TTS["enabled"]
 TTS_ENGINE = TTS["engine"]
 TTS_FALLBACK_ENGINE = TTS.get("fallback_engine", "")
+
+# Флаг глушения микрофона на время воспроизведения (см. докстринг модуля
+# и wake.py -> mic_muted). Путь — относительно корня проекта; если корень
+# не найден, глушение просто не ставится (демон из-за этого не падает).
+MUTE = CFG["mute"]
+_PROJECT_ROOT = config.project_root(SCRIPT_DIR)
+MUTE_FLAG_FILE = (_PROJECT_ROOT / MUTE["flag_path"]) if _PROJECT_ROOT else None
 
 
 # --------------------------------------------------------------------------
@@ -163,6 +185,46 @@ def speak(text: str) -> None:
 
 
 # --------------------------------------------------------------------------
+# Глушение микрофона на время воспроизведения
+# --------------------------------------------------------------------------
+
+def _playback_cap_sec() -> float:
+    """Верхняя граница длительности одной фразы, сек: предельный timeout
+    любого из движков синтеза (мог сработать запасной) плюс запас. До
+    "сейчас + это" ставится момент снятия глушения в mute.flag."""
+    timeouts = [TTS["gtts"]["timeout_sec"], TTS["spd_say"]["timeout_sec"]]
+    return max(timeouts) + MUTE["expiry_margin_sec"]
+
+
+def _set_mute_flag(task_id) -> None:
+    """Кладёт mute.flag (режим "until"): пока файл существует и момент в
+    нём не прошёл, wake.py не слушает микрофон. Пишем атомарно
+    (temp+rename), как всё в SMOS, — чтобы wake не поймал файл на
+    середине записи. Любой сбой — только в лог, воспроизведение важнее."""
+    if MUTE_FLAG_FILE is None:
+        return
+    payload = {"until": time.time() + _playback_cap_sec(), "by": "audio", "task_id": task_id}
+    try:
+        MUTE_FLAG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = MUTE_FLAG_FILE.with_name(MUTE_FLAG_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(MUTE_FLAG_FILE)
+    except OSError as e:
+        send_log("WARNING", "mute_flag_set_failed", {"error": str(e)})
+
+
+def _clear_mute_flag() -> None:
+    """Снимает mute.flag после воспроизведения. Нет файла — ничего
+    страшного (мог протухнуть по "until" сам). Сбой — только в лог."""
+    if MUTE_FLAG_FILE is None:
+        return
+    try:
+        MUTE_FLAG_FILE.unlink(missing_ok=True)
+    except OSError as e:
+        send_log("WARNING", "mute_flag_clear_failed", {"error": str(e)})
+
+
+# --------------------------------------------------------------------------
 # Очередь заявок
 # --------------------------------------------------------------------------
 
@@ -199,7 +261,18 @@ def process_file(f: Path) -> None:
         _reject(f, "нет непустого поля text")
         return
 
-    speak(text.strip())
+    # На время произнесения глушим микрофон (см. докстринг модуля):
+    # ставим только при реальной попытке синтеза, снимаем всегда, даже
+    # если speak() бросит — иначе микрофон останется глухим до "until".
+    mute_here = TTS_ENABLED and MUTE_FLAG_FILE is not None
+    if mute_here:
+        _set_mute_flag(task.get("task_id"))
+    try:
+        speak(text.strip())
+    finally:
+        if mute_here:
+            _clear_mute_flag()
+
     f.unlink(missing_ok=True)
     send_log("INFO", "spoken", {
         "task_id": task.get("task_id"),
@@ -235,8 +308,13 @@ def main() -> None:
 
     send_log("INFO", "audio_started", {
         "tts_enabled": TTS_ENABLED, "engine": TTS_ENGINE, "fallback_engine": TTS_FALLBACK_ENGINE,
+        "mute_flag": str(MUTE_FLAG_FILE) if MUTE_FLAG_FILE else None,
     })
     print(f"[audio] запущен. Очередь заявок на озвучку: {TASKS_DIR}")
+    if MUTE_FLAG_FILE is not None:
+        print(f"[audio] на время озвучки глушу микрофон через: {MUTE_FLAG_FILE}")
+    else:
+        print("[audio] корень проекта не найден — глушение микрофона на время озвучки ОТКЛЮЧЕНО")
     if TTS_ENABLED:
         print(f"[audio] движок: {TTS_ENGINE} ({_engine_ready(TTS_ENGINE)})")
         if TTS_FALLBACK_ENGINE and TTS_FALLBACK_ENGINE != TTS_ENGINE:

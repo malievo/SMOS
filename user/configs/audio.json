@@ -25,6 +25,12 @@
     }
   },
 
+  "mute": {
+    "_comment": "Глушение микрофона на время воспроизведения. Пока audio.py произносит фразу, он кладёт flag_path — wake.py это видит и перестаёт слушать, чтобы система не услышала саму себя и не закольцевалась. flag_path — относительно корня проекта (папки с smos.root). Пишется в режиме 'until' (сейчас + max timeout движков + expiry_margin_sec): если демон упадёт, не сняв флаг, микрофон сам отпустит через это время. Контракт файла — wake.py, функция mic_muted.",
+    "flag_path": "system/fwl/rvs/flags/mute.flag",
+    "expiry_margin_sec": 2
+  },
+
   "paths": {
     "_comment": "tasks_dir — вход (сюда пишет outputstructurizer), относительно папки с audio.py. rejected — подпапка tasks_dir. Обе — рантайм-данные, в .gitignore.",
     "tasks_dir": "tasks",

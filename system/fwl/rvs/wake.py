@@ -58,6 +58,44 @@ wake.py — детекция активационного слова И запи
   диалога. Явное произнесение активационного слова работает всегда,
   независимо от этого окна.
 
+ГЛУШЕНИЕ ВХОДА (flags/mute.flag, добавлено 2026-09-06):
+    Если в момент прослушивания система сама что-то воспроизводит
+    (ответ ассистента, системный звук), микрофон слышит сам себя. Без
+    защиты это уходит в распознавание и может закольцеваться: ответ ->
+    услышали -> команда -> снова ответ (на высокой громкости — прямо
+    бесконечный цикл).
+
+    Поэтому любой компонент SMOS, начиная воспроизведение (или по
+    другой причине — например, критическая секция системы
+    безопасности), кладёт файл flags/mute.flag. Пока флаг активен,
+    wake продолжает читать микрофон, но НЕ ищет активационное слово,
+    НЕ входит в запись и держит кольцевой буфер-довесок пустым.
+    Запись, начатую ДО появления флага, обрывает — её хвост всё равно
+    испорчен воспроизведением.
+
+    Флаг активен, пока файл есть И либо в нём JSON {"until": <unix-
+    время>} с временем в будущем (разово "заглушить до момента X"),
+    либо его mtime свежий — писатель "пульсирует", трогая файл чаще
+    mute.freshness_sec секунд. Перестал пульсировать или упал ->
+    глушение само спадает через mute.freshness_sec, чинить ничего не
+    надо (отказобезопасно: сбой писателя = wake снова слышит, а не
+    глохнет навсегда).
+
+    Сняв глушение, wake ещё mute.release_cooldown_sec секунд не
+    слушает — даёт эху в комнате и буферу звуковой карты стихнуть.
+
+    Флаг лежит в папке самой системы распознавания (flags/), не в
+    аудио-подсистеме: заглушить rvs может понадобиться не только
+    из-за озвучки. Кто и когда ставит флаг — вне этого файла, wake
+    только реагирует.
+
+    Флаг проверяется в ДВУХ точках: (1) в начале каждого витка цикла —
+    не входим в запись, а начатую обрываем; (2) у самой передачи
+    записи в req.py (перед save_utterance) — на случай, если запись
+    завершилась в тот же ~80-мс виток, на котором воспроизведение
+    только началось и флаг ещё не был виден первой проверке; такая
+    запись отбрасывается (utterance_discarded_muted).
+
 ВАЖНО: пока что этот скрипт рассчитан на то, что лежит в ТОЙ ЖЕ
 папке, что и req.py — они используют общий config.json и общую папку
 flags/. (Позже, когда будешь оформлять по-нормальному, стоит вынести
@@ -103,6 +141,7 @@ flags/utterance.wav), req.py эту запись читает и распозн�
 """
 
 import collections
+import json
 import sys
 import time
 import wave
@@ -125,6 +164,7 @@ CFG = config.load(SCRIPT_DIR)
 FLAGS_DIR = SCRIPT_DIR / CFG["paths"]["flags_dir"]
 ACTIVITY_FILE = FLAGS_DIR / CFG["paths"]["activity_file"]  # общий с req.py сигнал "было успешное распознавание"
 UTTERANCE_FILE = FLAGS_DIR / CFG["paths"]["utterance_file"]  # готовая цельная запись фразы, для req.py
+MUTE_FLAG_FILE = FLAGS_DIR / CFG["paths"]["mute_file"]  # любой компонент кладёт его, чтобы wake на время перестал слушать (см. mic_muted)
 
 # --- Настройки (все — из config.json, см. config.py -> DEFAULTS за описанием) ---
 _model_path_str = CFG["wake_word"]["model_path"]
@@ -178,6 +218,10 @@ ENERGY_THRESHOLD = CFG["recording"]["energy_threshold"]
 PAUSE_THRESHOLD_SEC = CFG["recording"]["pause_threshold_sec"]
 MAX_UTTERANCE_SECONDS = CFG["recording"]["max_utterance_seconds"]
 
+# --- Глушение входа (flags/mute.flag, см. mic_muted и докстринг модуля) ---
+MUTE_FRESHNESS_SEC = CFG["mute"]["freshness_sec"]
+MUTE_RELEASE_COOLDOWN_SEC = CFG["mute"]["release_cooldown_sec"]
+
 
 def get_activity_mtime() -> float:
     """Возвращает mtime flags/activity.flag или 0.0, если файла ещё нет."""
@@ -185,6 +229,40 @@ def get_activity_mtime() -> float:
         return ACTIVITY_FILE.stat().st_mtime
     except FileNotFoundError:
         return 0.0
+
+
+def mic_muted(now: float) -> bool:
+    """Заглушён ли сейчас вход распознавания. Любой компонент SMOS
+    может временно "оглушить" wake, положив flags/mute.flag — на время
+    озвучки ответа (чтобы система не услышала саму себя и не
+    закольцевалась), на время критической секции и т.п. Кто и когда
+    ставит флаг — вне этого файла.
+
+    Флаг активен, если файл есть И выполняется одно из:
+      - в нём лежит JSON вида {"until": <unix-время>} и это время ещё
+        не наступило — режим "заглушить до момента X", писателю больше
+        ничего делать не нужно (удобно для известного интервала);
+      - иначе mtime файла свежий (обновлялся не позже
+        MUTE_FRESHNESS_SEC секунд назад) — режим "пульса": писатель,
+        пока держит глушение, трогает файл чаще этого интервала.
+
+    Нет файла, "until" в прошлом или mtime протух -> не заглушено.
+    Отказобезопасно: если писатель упал и перестал трогать файл,
+    глушение само спадёт через MUTE_FRESHNESS_SEC — wake снова
+    слышит, а не глохнет навсегда."""
+    try:
+        mtime = MUTE_FLAG_FILE.stat().st_mtime
+    except OSError:
+        return False
+
+    try:
+        data = json.loads(MUTE_FLAG_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("until"), (int, float)):
+            return now < data["until"]
+    except (OSError, ValueError):
+        pass  # пустой файл / не JSON -> ниже режим "пульса" по mtime
+
+    return (now - mtime) <= MUTE_FRESHNESS_SEC
 
 
 def _rms(raw_chunk: bytes) -> float:
@@ -251,11 +329,48 @@ def main() -> None:
     last_trigger_time = 0.0  # для дебаунса детекции слова
     continuation_until = 0.0  # до какого момента разрешено начать запись без слова активации
     last_activity_mtime = get_activity_mtime()  # чтобы не среагировать на старый файл при старте
+    muted = False  # заглушён ли сейчас вход (см. mic_muted, flags/mute.flag)
+    listen_resume_at = 0.0  # после снятия глушения до этого момента ещё не слушаем (эхо в комнате)
 
     try:
         while True:
             raw_audio = stream.read(CHUNK_SIZE, exception_on_overflow=False)
             now = time.time()
+
+            # --- Глушение входа. Любой компонент SMOS может временно
+            # "оглушить" распознавание, положив flags/mute.flag (см.
+            # mic_muted и докстринг модуля). Проверяем раньше всего:
+            # поток микрофона продолжаем вычитывать (чтобы не
+            # переполнялся буфер звуковой карты), но НЕ распознаём и
+            # НЕ пишем.
+            if mic_muted(now):
+                if not muted:
+                    muted = True
+                    print("[wake] Вход заглушён (flags/mute.flag) — не слушаю")
+                    log_client.send_log("INFO", "mic_muted")
+                if state == "recording":
+                    # запись, начатую ДО глушения, не продолжаем — её
+                    # хвост всё равно будет забит воспроизведением
+                    utterance_chunks = []
+                    silence_run_sec = 0.0
+                    state = "listening"
+                ring_buffer.clear()
+                continue
+
+            if muted:
+                # глушение только что снято
+                muted = False
+                ring_buffer.clear()
+                listen_resume_at = now + MUTE_RELEASE_COOLDOWN_SEC
+                last_activity_mtime = get_activity_mtime()  # не считать за "продолжение диалога" то, что произошло во время глушения
+                print("[wake] Глушение снято — слушаю снова")
+                log_client.send_log("INFO", "mic_unmuted")
+
+            if now < listen_resume_at:
+                # короткая пауза после снятия глушения: даём эху в
+                # комнате и буферу звуковой карты стихнуть; довесок
+                # пока не копим, чтобы хвост озвучки в него не попал
+                continue
 
             if state == "listening":
                 ring_buffer.append(raw_audio)
@@ -315,18 +430,33 @@ def main() -> None:
 
                 if phrase_ended:
                     reason = "max_length" if too_long else "silence"
-                    if too_long:
-                        print(f"[wake] Превышена максимальная длина фразы ({MAX_UTTERANCE_SECONDS}с) — заканчиваю запись")
+                    # Второй чекпоинт глушения (первый — в начале цикла).
+                    # Между витками ~80 мс: запись могла завершиться в тот
+                    # же виток, на котором воспроизведение только началось
+                    # и флаг ещё не был виден верхней проверке. Пере-
+                    # проверяем здесь, у самой передачи в req.py: если
+                    # заглушено — запись почти наверняка захватила начало
+                    # собственной озвучки, не отдаём её (иначе тот самый
+                    # цикл, от которого защищаемся).
+                    if mic_muted(now):
+                        print("[wake] Фраза закончилась уже под глушение — запись отброшена, не передаю")
+                        log_client.send_log("INFO", "utterance_discarded_muted", {"reason": reason})
+                        utterance_chunks = []
+                        ring_buffer.clear()
+                        state = "listening"
                     else:
-                        print("[wake] Тишина — фраза закончена, сохраняю запись")
-                    save_utterance(utterance_chunks)
-                    log_client.send_log(
-                        "INFO", "utterance_saved",
-                        {"reason": reason, "duration_sec": round(now - utterance_started_at, 2)},
-                    )
-                    utterance_chunks = []
-                    ring_buffer.clear()  # копим довесок заново с чистого листа
-                    state = "listening"
+                        if too_long:
+                            print(f"[wake] Превышена максимальная длина фразы ({MAX_UTTERANCE_SECONDS}с) — заканчиваю запись")
+                        else:
+                            print("[wake] Тишина — фраза закончена, сохраняю запись")
+                        save_utterance(utterance_chunks)
+                        log_client.send_log(
+                            "INFO", "utterance_saved",
+                            {"reason": reason, "duration_sec": round(now - utterance_started_at, 2)},
+                        )
+                        utterance_chunks = []
+                        ring_buffer.clear()  # копим довесок заново с чистого листа
+                        state = "listening"
 
             # req.py что-то успешно распознал -> продлеваем окно продолжения
             # диалога (разрешаем начинать запись без нового слова активации)
