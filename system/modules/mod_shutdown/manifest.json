@@ -1,0 +1,9 @@
+{
+  "name": "mod_shutdown",
+  "description": "Останавливает или перезапускает саму SMOS — все её процессы (wake, req, classifier, swl, core, outputstructurizer, cnps, logs). Вызывает `smos.py stop|restart` с небольшой задержкой, чтобы успеть ответить, и завершается. Это НЕ выключение и НЕ перезагрузка компьютера — только самой SMOS. Триггеры: «выключи смос», «выключение системы», «останови систему», «заверши работу», «отключись» -> smos_stop; «перезапусти смос», «перезагрузи систему», «рестарт», «ребут» -> smos_restart. После остановки поднять голосом нельзя — микрофон гаснет вместе со всем.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {"command": "smos_stop",    "description": "Полностью остановить SMOS (все процессы)",              "needs": [], "produces": ["smos_stopped"],   "cost": 1},
+    {"command": "smos_restart", "description": "Перезапустить SMOS (остановить и поднять заново)",       "needs": [], "produces": ["smos_restarted"], "cost": 1}
+  ]
+}

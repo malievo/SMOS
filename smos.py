@@ -47,8 +47,9 @@ smos.py — единая точка входа SMOS: preflight-проверка,
   python smos.py start --restart      поднимать упавший процесс заново (в merged — с backoff)
   python smos.py start --no-update    пропустить проверку обновления
   python smos.py stop                 погасить всё, что запускал launcher
+  python smos.py stop --timer 2       подождать 2с и погасить (для остановки изнутри — модуль mod_shutdown)
   python smos.py status              кто жив, pid, uptime, режим классификатора
-  python smos.py restart [флаги start]
+  python smos.py restart [флаги start]   (тоже принимает --timer SEC — задержка перед фазой стопа)
   python smos.py check              только preflight, ничего не запускать
 
 Запускать из .venv, чтобы дети унаследовали интерпретатор:
@@ -650,7 +651,17 @@ def stop_tmux_session() -> None:
 # stop / status / restart
 # --------------------------------------------------------------------------
 
-def cmd_stop() -> None:
+def cmd_stop(delay: float = 0.0) -> None:
+    # delay > 0: подождать перед остановкой. Нужно, когда stop запускает
+    # сам SMOS изнутри (модуль mod_shutdown) — модулю-инициатору и его
+    # ответу по цепочке (core -> outputstructurizer) надо успеть
+    # завершиться раньше, чем мы дойдём до их процессов. Задержку задаёт
+    # вызывающий (`smos.py stop --timer N`), тут просто ждём.
+    if delay > 0:
+        print(f"[smos] остановка через {delay:g}с...")
+        send_log("INFO", "stop_delayed", {"delay_sec": delay})
+        time.sleep(delay)
+
     state = read_state()
     if state is None:
         print("[smos] state.json нет — launcher ничего не запускал")
@@ -743,8 +754,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="smos.py", description="Единая точка входа SMOS.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     add_start_flags(sub.add_parser("start", help="preflight + запуск всех процессов"))
-    add_start_flags(sub.add_parser("restart", help="stop, затем start с теми же флагами"))
-    sub.add_parser("stop", help="погасить всё, что запускал launcher")
+    restart_p = sub.add_parser("restart", help="stop, затем start с теми же флагами")
+    add_start_flags(restart_p)
+    restart_p.add_argument("--timer", type=float, default=0.0, metavar="SEC",
+                           help="подождать SEC секунд перед фазой остановки")
+    stop_p = sub.add_parser("stop", help="погасить всё, что запускал launcher")
+    stop_p.add_argument("--timer", type=float, default=0.0, metavar="SEC",
+                        help="подождать SEC секунд перед остановкой "
+                             "(инициатор-модуль успевает корректно завершиться)")
     sub.add_parser("status", help="кто жив, pid, uptime")
     sub.add_parser("check", help="только preflight")
 
@@ -756,10 +773,10 @@ def main() -> None:
         cmd_status()
         return
     if args.cmd == "stop":
-        cmd_stop()
+        cmd_stop(args.timer)
         return
     if args.cmd == "restart":
-        cmd_stop()
+        cmd_stop(args.timer)
         time.sleep(1.0)
         run_start(args)
         return

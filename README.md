@@ -128,6 +128,7 @@ Raspberry Pi, и на сервере без экрана.
 | `mod_calc` | `evaluate` | `expression` → `calc_result` | арифметика: разбор через `ast`, вычисление обходом дерева, без `eval` |
 | `mod_notes` | `add_note` / `list_notes` | `note_text` → `note_saved` / → `notes_list` | заметки в личной папке данных модуля |
 | `mod_journal` | `write_snapshot` | `current_datetime`, `system_stats` → `journal_written` | снимок состояния в журнал; тянет два модуля выше — пример многошагового графа |
+| `mod_shutdown` | `smos_stop` / `smos_restart` | → `smos_stopped` / `smos_restarted` | останавливает/перезапускает саму SMOS: отвязанный `smos.py stop\|restart --timer N`, потом завершается. Не питание хоста |
 
 Тестовые фикстуры (`clock`, `echo`, `greeting`, `location`, `weather`) —
 фиктивные данные, нужны только для проверки сканера и планировщика.
