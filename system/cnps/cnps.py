@@ -459,13 +459,24 @@ class CNPS:
                 continue
 
             with self.lock:
-                ok = (task is self.current and not self.paused
-                      and idx == task.sentence_idx and self.enabled)
-                proc = self._spawn(kind, payload) if ok else None
-                if proc is not None:
-                    self.player_proc = proc
+                # Пока шёл _prepare (синтез/сеть — вне lock, секунды),
+                # мог прийти запрос на прерывание: intake бросил
+                # _kill_player("preempt") для более важной заявки, но
+                # проигрывателя ещё не было — kill пришёлся в пустоту, а
+                # _kill_reason остался. Не запускаем это предложение:
+                # чистим флаг и уходим на новую итерацию, где _select
+                # разведёт приоритеты. (Аналогично для stop/pause/skip,
+                # прилетевших во время _prepare.)
+                if self._kill_reason is not None:
                     self._kill_reason = None
-                    self._refresh_mute()
+                    proc = None
+                else:
+                    ok = (task is self.current and not self.paused
+                          and idx == task.sentence_idx and self.enabled)
+                    proc = self._spawn(kind, payload) if ok else None
+                    if proc is not None:
+                        self.player_proc = proc
+                        self._refresh_mute()
             if proc is None:
                 time.sleep(0.02)
                 continue
