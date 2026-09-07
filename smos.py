@@ -19,7 +19,7 @@ smos.py — единая точка входа SMOS: preflight-проверка,
   logs       logs/listener/listener.py            демон логов (UDP) — первым
   core       system/core/core.py                  ядро: очередь целей -> задачи
   outputstructurizer  system/outputstructurizer/outputstructurizer.py  результат задачи -> человеческая фраза
-  audio      system/audio/audio.py                фраза -> озвучка (spd-say), v1
+  cnps       system/cnps/cnps.py                  фраза -> класс важности + синтез + воспроизведение (заменил audio)
   swl        system/swl/swl.py                    команда -> структурированная цель
   classifier system/fwl/classifier/classifier.py  команда / разговор
   req        system/fwl/rvs/req.py                запись фразы -> текст (Google STT)
@@ -165,7 +165,12 @@ PROCESSES = [
     Proc("logs", "logs/listener/listener.py"),
     Proc("core", "system/core/core.py"),
     Proc("outputstructurizer", "system/outputstructurizer/outputstructurizer.py", ["gigachat", "dotenv"]),
-    Proc("audio", "system/audio/audio.py"),
+    # cnps заменил audio: приём заявок + класс важности + синтез по
+    # предложениям + одна дорожка с вытеснением + TTL/Recap + управление
+    # по UDP + пульс mute.flag. Питон-зависимостей для СТАРТА нет
+    # (piper опционален -> откат на spd-say -> печать; numpy не нужен;
+    # aplay/paplay — системные). См. system/cnps/cnps_design.md.
+    Proc("cnps", "system/cnps/cnps.py"),
     Proc("swl", "system/swl/swl.py", ["gigachat", "dotenv"]),
     Proc("classifier", "system/fwl/classifier/classifier.py",
          ["gigachat", "dotenv", "sentence_transformers", "sklearn", "joblib", "numpy"]),

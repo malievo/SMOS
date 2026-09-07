@@ -24,6 +24,9 @@ system/core/goals/*
 system/outputstructurizer/queue/*
 system/outputstructurizer/output/*
 system/audio/tasks/*
+system/cnps/tasks/*
+system/cnps/cache/*
+system/cnps/state.json
 system/swl/output/*
 logs/raw/*
 

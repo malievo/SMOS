@@ -1,0 +1,84 @@
+{
+  "_comment": "Настройки CNPS (SMOS) — центральная система оповещения/воспроизведения: принимает заявки в system/cnps/tasks/, сама решает важность по источнику, синтезирует речь по предложениям и играет одной дорожкой с вытеснением. Меняй значения и перезапускай cnps.py. Любое поле можно удалить — тогда берётся значение по умолчанию из config.py (DEFAULTS). Поля \"_comment\" скрипт не использует. Полный разбор — system/cnps/cnps_design.md.",
+
+  "enabled": true,
+  "check_interval_sec": 0.3,
+
+  "players": [["aplay", "-q"], ["paplay"]],
+  "play_timeout_sec": 30,
+
+  "synth": {
+    "_comment": "Движки: gtts (Google TTS, ЖЕНСКИЙ голос ассистента, онлайн, MP3), piper (нейросетевой МУЖСКОЙ голос системы, офлайн; pip install piper-tts + модель), spd-say (последний запас). Движок заявки: поле voice/engine в манифесте -> engine_by_source[source] -> engine (дефолт). fallback_engine — цепочка запаса (строка или список): gtts офлайн -> piper -> spd-say. Различие «ассистент vs система» держится на gtts vs piper, не на piper_voice.",
+    "engine": "piper",
+    "engine_by_source": {
+      "outputstructurizer": "gtts"
+    },
+    "fallback_engine": ["piper", "spd-say"],
+    "piper_voice": "ru_RU-dmitri-medium",
+    "model_dir": "../sysaudio/models",
+    "piper_timeout_sec": 30,
+    "gtts": {
+      "lang": "ru",
+      "tld": "com",
+      "slow": false,
+      "players": [["gst-play-1.0", "--quiet"], ["mpg123", "-q"], ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]]
+    },
+    "spd_say_command": ["spd-say", "-w", "-l", "ru"]
+  },
+
+  "control_udp_host": "127.0.0.1",
+  "control_udp_port": 47120,
+
+  "source_ceiling": {
+    "_comment": "Потолок класса важности по источнику заявки (`source`). Запрошенный в манифесте класс зажимается: подняться ВЫШЕ потолка нельзя. Заявке доверять класс нельзя — см. cnps_design.md, «Аналитический слой».",
+    "smos": "CRITICAL",
+    "updater": "CRITICAL",
+    "sysaudio": "CRITICAL",
+    "watcher": "ALERT",
+    "core": "ALERT",
+    "outputstructurizer": "RESULT",
+    "chat": "CHAT"
+  },
+  "source_default_class": {
+    "smos": "CRITICAL",
+    "updater": "CRITICAL",
+    "sysaudio": "ALERT",
+    "watcher": "ALERT",
+    "core": "RESULT",
+    "outputstructurizer": "RESULT",
+    "chat": "CHAT"
+  },
+  "trusted_direct_sources": ["outputstructurizer", "core", "watcher", "chat", "smos", "updater", "sysaudio"],
+  "unknown_source_class": "AMBIENT",
+
+  "classes": {
+    "_comment": "ttl_soft_sec — прерванная заявка в пределах этого срока (от создания) сама доигрывает; ttl_hard_sec — после него только по явной просьбе (repeat/continue из Recap). voice_interruptible — можно ли оборвать командой (stop/pause/skip); CRITICAL — нет. preemptible — можно ли вытеснить приходом более важной.",
+    "CRITICAL": {"ttl_soft_sec": 3600, "ttl_hard_sec": 86400, "voice_interruptible": false, "preemptible": false},
+    "ALERT":    {"ttl_soft_sec": 300,  "ttl_hard_sec": 3600,  "voice_interruptible": true,  "preemptible": true},
+    "RESULT":   {"ttl_soft_sec": 60,   "ttl_hard_sec": 900,   "voice_interruptible": true,  "preemptible": true},
+    "CHAT":     {"ttl_soft_sec": 30,   "ttl_hard_sec": 300,   "voice_interruptible": true,  "preemptible": true},
+    "AMBIENT":  {"ttl_soft_sec": 15,   "ttl_hard_sec": 60,    "voice_interruptible": true,  "preemptible": true}
+  },
+  "privilege_level_class": {"0": "AMBIENT", "1": "CHAT", "2": "RESULT", "3": "ALERT", "4": "CRITICAL"},
+
+  "recap_size": 10,
+  "volume_step": 0.15,
+  "volume": 1.0,
+
+  "mute": {
+    "_comment": "Глушение микрофона на время воспроизведения (анти-петля «система слышит саму себя», v1.1.1). Раньше ставил system/audio/audio.py, теперь CNPS. flag_path — относительно КОРНЯ проекта. Режим «пульс»: пока играет, CNPS переписывает {\"until\": now + until_margin_sec} чаще refresh_interval_sec. Контракт файла и wake.py в v1 не меняются.",
+    "flag_path": "system/fwl/rvs/flags/mute.flag",
+    "until_margin_sec": 3,
+    "refresh_interval_sec": 1.0
+  },
+
+  "paths": {
+    "_comment": "tasks_dir — входящие заявки, cache_dir — кэш синтезированных предложений, state_file — снимок состояния (всё относительно папки с cnps.py, всё в .gitignore). sysaudio_clips_dir — где брать клипы для kind:\"clip\".",
+    "tasks_dir": "tasks",
+    "rejected_subdir": "rejected",
+    "cache_dir": "cache",
+    "state_file": "state.json",
+    "sysaudio_clips_dir": "../sysaudio/clips"
+  },
+  "sysaudio_lang": "ru"
+}

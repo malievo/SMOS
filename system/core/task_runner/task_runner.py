@@ -72,7 +72,20 @@ def _emit_completion(record: dict, source_text: str | None) -> None:
 
     Место под поле speech (дословная формулировка от модуля, который
     произвёл цель) оставлено на будущее — сейчас его никто не заполняет
-    и не читает, см. system/audio/audio_design.md."""
+    и не читает, см. system/audio/audio_design.md.
+
+    Флаг silent (см. system/cnps/cnps_design.md, раздел «Управление
+    воспроизведением и модуль-компаньон»): если результат модуля —
+    словарь с "silent"/"_silent" == true, задачу озвучивать не надо.
+    Так модуль mod_playback гасит текстовое подтверждение поверх
+    только что оборванной озвучки. В очередь ничего не кладём."""
+    result = record.get("result")
+    if isinstance(result, dict) and (result.get("silent") or result.get("_silent")):
+        send_log("INFO", "completion_silent", {
+            "task_id": record["task_id"], "goal": record["goal"], "status": record["status"],
+        })
+        return
+
     OUTPUTSTRUCTURIZER_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "task_id": record["task_id"],

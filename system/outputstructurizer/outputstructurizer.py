@@ -1,14 +1,14 @@
 """
-outputstructurizer.py — промежуточный этап между ядром и озвучкой.
+outputstructurizer.py — промежуточный этап между ядром и воспроизведением.
 
-Место в системе (см. outputstructurizer_design.md, ../audio/audio_design.md,
+Место в системе (см. outputstructurizer_design.md, ../cnps/cnps_design.md,
 ../core/core_design.md раздел «Отдача результата дальше»):
 
     ядро/task_runner  ──► system/outputstructurizer/queue/   (файл на задачу)
                               │  этот процесс: result/error -> человеческая фраза
                               ▼
-                        system/audio/tasks/                    (заявка на озвучку)
-                              │  аудио-демон: фраза -> spd-say
+                        system/cnps/tasks/                    (заявка на воспроизведение)
+                              │  CNPS: класс важности + синтез по предложениям
                               ▼
                           произнесено
 
@@ -22,7 +22,7 @@ outputstructurizer.py — промежуточный этап между ядр�
      - разбирает: обязательны строковые task_id, goal, status;
      - phrasing.render() выбирает фразу (готовый шаблон -> GigaChat ->
        сырой результат, см. phrasing.py);
-     - кладёт заявку <task_id>.json в system/audio/tasks/ (атомарно);
+     - кладёт заявку <task_id>.json в system/cnps/tasks/ (атомарно);
      - если фразу сформулировал GigaChat — дописывает пример в
        output/dataset.jsonl (материал для будущей локальной модели);
      - удаляет разобранный файл очереди.
@@ -58,13 +58,16 @@ CFG = config.load(SCRIPT_DIR)
 QUEUE_DIR = SCRIPT_DIR / CFG["paths"]["queue_dir"]
 REJECTED_DIR = QUEUE_DIR / CFG["paths"]["rejected_subdir"]
 STALE_DIR = QUEUE_DIR / CFG["paths"]["stale_subdir"]
-AUDIO_TASKS_DIR = (SCRIPT_DIR / CFG["paths"]["audio_tasks_dir"]).resolve()
+# Заявки на воспроизведение кладём в CNPS (system/cnps/tasks/); если в
+# конфиге нет cnps_tasks_dir — откат на старую заглушку system/audio/.
+PLAYBACK_TASKS_DIR = (SCRIPT_DIR / CFG["paths"].get("cnps_tasks_dir", CFG["paths"]["audio_tasks_dir"])).resolve()
 PHRASES_FILE = SCRIPT_DIR / CFG["paths"]["phrases_file"]
 OUTPUT_DIR = SCRIPT_DIR / CFG["paths"]["output_dir"]
 DATASET_FILE = OUTPUT_DIR / CFG["paths"]["dataset_file"]
 
 CHECK_INTERVAL_SEC = CFG["check_interval_sec"]
 PRIVILEGE_LEVEL = CFG["privilege_level"]
+PLAYBACK_VOICE = CFG.get("playback_voice", "gtts")
 
 
 def now_iso() -> str:
@@ -119,33 +122,43 @@ def discard_stale_on_start() -> None:
     print(f"[outputstructurizer] на старте отброшено устаревших результатов: {len(stale)}")
 
 
-def emit_audio_task(record: dict, text: str, source: str) -> str:
-    """Кладёт заявку на озвучку в system/audio/tasks/ (атомарно,
-    temp+rename). Имя файла = task_id (он уже уникален и по времени —
-    очередь читается по порядку). Возвращает имя файла."""
-    AUDIO_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+def emit_audio_task(record: dict, text: str, phrase_layer: str) -> str:
+    """Кладёт заявку на воспроизведение в CNPS (system/cnps/tasks/,
+    атомарно temp+rename). Имя файла = task_id (уникален и по времени —
+    очередь читается по порядку). Возвращает имя файла.
+
+    Манифест заявки CNPS — см. system/cnps/cnps_design.md, «Манифест
+    заявки». Класс важности проставляет САМ CNPS по source; здесь мы
+    только честно называем источник (outputstructurizer -> потолок
+    RESULT) и передаём privilege_level=2 как подсказку (CNPS её
+    зажмёт по потолку). phrase_layer (template|llm|fallback) — для
+    отладки/статистики, на класс не влияет."""
+    PLAYBACK_TASKS_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
+        "id": record["task_id"],
         "task_id": record["task_id"],
+        "kind": "speech",
+        # Кто прислал — основной сигнал важности для CNPS.
+        "source": "outputstructurizer",
         "goal": record["goal"],
         "status": record["status"],
         "text": text,
-        # Уровень привилегий заявки. Для ответов модулей пользователю —
-        # всегда 2. Другие уровни (будильник, критическая ошибка,
-        # ambient) появятся с приоритетной очередью настоящего
-        # аудио-демона, см. ../audio/audio_design.md.
+        # Подсказка класса: ответ модуля пользователю. CNPS зажмёт по
+        # потолку источника (outputstructurizer -> RESULT).
         "privilege_level": PRIVILEGE_LEVEL,
-        # Каким слоём получена фраза: template | llm | fallback.
-        "source": source,
+        # Голос: ответы и болталку CNPS озвучивает женским gtts (голос
+        # ассистента), отдельным от мужского piper системных сообщений.
+        **({"voice": PLAYBACK_VOICE} if PLAYBACK_VOICE else {}),
+        # Каким слоём формулировки получена фраза: template | llm | fallback.
+        "phrase_layer": phrase_layer,
         # Исходная фраза пользователя — на будущее (тон/скорость озвучки).
         "source_text": record.get("source_text"),
-        # Тип заявки для будущей приоритетной очереди аудио-демона.
-        "kind": "tts",
         "ts": now_iso(),
     }
     name = f"{record['task_id']}.json"
-    tmp = AUDIO_TASKS_DIR / (name + ".tmp")
+    tmp = PLAYBACK_TASKS_DIR / (name + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(AUDIO_TASKS_DIR / name)
+    tmp.replace(PLAYBACK_TASKS_DIR / name)
     return name
 
 
@@ -213,7 +226,7 @@ def process_file(f: Path, phrases: dict, seen: set) -> None:
 
 def main() -> None:
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    AUDIO_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    PLAYBACK_TASKS_DIR.mkdir(parents=True, exist_ok=True)
 
     phrases = load_phrases()
     discard_stale_on_start()
@@ -221,7 +234,7 @@ def main() -> None:
     send_log("INFO", "outputstructurizer_started", {"goals_with_phrases": sorted(
         k for k in phrases if not k.startswith("_"))})
     print(f"[outputstructurizer] запущен. Очередь результатов: {QUEUE_DIR}")
-    print(f"[outputstructurizer] заявки на озвучку кладу в: {AUDIO_TASKS_DIR}")
+    print(f"[outputstructurizer] заявки на воспроизведение кладу в: {PLAYBACK_TASKS_DIR}")
 
     seen: set = set()
     while True:

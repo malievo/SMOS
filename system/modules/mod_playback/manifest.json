@@ -1,0 +1,15 @@
+{
+  "name": "mod_playback",
+  "description": "Управление воспроизведением CNPS голосом: стоп, повтори, продолжи, пауза, дальше, тише, громче. Модуль-компаньон CNPS (см. system/cnps/cnps_design.md) — переводит цель в управляющий UDP-фрейм CNPS и возвращает ядру silent, чтобы поверх оборванной озвучки не прозвучало текстовое подтверждение. CNPS работает и без этого модуля — просто командовать воспроизведением нельзя.",
+  "entrypoint": {"command": ["python3", "main.py"]},
+  "actions": [
+    {"command": "playback_stop",     "description": "Остановить текущее воспроизведение",              "needs": [], "produces": ["playback_stopped"],   "cost": 1},
+    {"command": "playback_pause",    "description": "Поставить воспроизведение на паузу",              "needs": [], "produces": ["playback_paused"],    "cost": 1},
+    {"command": "playback_resume",   "description": "Продолжить с паузы",                              "needs": [], "produces": ["playback_resumed"],   "cost": 1},
+    {"command": "playback_skip",     "description": "Пропустить текущее предложение",                  "needs": [], "produces": ["playback_skipped"],   "cost": 1},
+    {"command": "playback_repeat",   "description": "Повторить последнее сказанное с начала",          "needs": [], "produces": ["playback_repeated"],  "cost": 1},
+    {"command": "playback_continue", "description": "Продолжить последнее прерванное с того же места", "needs": [], "produces": ["playback_continued"], "cost": 1},
+    {"command": "playback_louder",   "description": "Сделать громче",                                  "needs": [], "produces": ["playback_louder_done"],  "cost": 1},
+    {"command": "playback_quieter",  "description": "Сделать тише",                                    "needs": [], "produces": ["playback_quieter_done"], "cost": 1}
+  ]
+}

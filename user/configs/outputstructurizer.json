@@ -20,11 +20,15 @@
 
   "privilege_level": 2,
 
+  "_comment_voice": "Каким голосом CNPS озвучивает ответы и болталку. gtts — женский Google TTS (голос ассистента), отдельный от мужского piper системных сообщений. \"\" — не проставлять (CNPS сам решит по source).",
+  "playback_voice": "gtts",
+
   "paths": {
-    "_comment": "queue_dir — вход (сюда пишет ядро/task_runner), относительно папки со скриптом. audio_tasks_dir — выход (заявки на озвучку), относительно неё же. phrases_file — поставляемая таблица фраз рядом со скриптом. rejected/stale — подпапки queue_dir.",
+    "_comment": "queue_dir — вход (сюда пишет ядро/task_runner), относительно папки со скриптом. cnps_tasks_dir — выход (заявки на воспроизведение в CNPS), относительно неё же; audio_tasks_dir — откат на старую заглушку system/audio/, если CNPS ещё не собран. phrases_file — поставляемая таблица фраз рядом со скриптом. rejected/stale — подпапки queue_dir.",
     "queue_dir": "queue",
     "rejected_subdir": "rejected",
     "stale_subdir": "stale",
+    "cnps_tasks_dir": "../cnps/tasks",
     "audio_tasks_dir": "../audio/tasks",
     "phrases_file": "phrases.json",
     "output_dir": "output",
