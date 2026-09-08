@@ -29,6 +29,10 @@ system/cnps/cache/*
 system/cnps/state.json
 system/swl/output/*
 logs/raw/*
+# logs/analytics/: код коммитится, а собранная история по командам
+# (traces/) и рабочее состояние watch — локальные рантайм-данные.
+logs/analytics/traces/*
+logs/analytics/watch_state.json
 
 # system/sysaudio/: clips/ коммитятся (ассеты), а models/ — локальный кэш
 # голосовой модели Piper (~60 МБ, качается generate.py), voice_samples/ —

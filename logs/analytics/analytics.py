@@ -44,6 +44,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import config  # noqa: E402
 import pipeline  # noqa: E402
 from log_client import send_log  # noqa: E402
+from store import TraceStore  # noqa: E402
 
 CFG = config.load(SCRIPT_DIR)
 
@@ -223,6 +224,41 @@ class TraceView:
         a = self.stage_ts.get("heard")
         b = self.stage_ts.get("spoken")
         return (b - a).total_seconds() if a and b else None
+
+    def gap_latencies(self) -> dict:
+        out = {}
+        for a, b in pipeline.GAPS:
+            ta, tb = self.stage_ts.get(a), self.stage_ts.get(b)
+            if ta and tb and tb >= ta:
+                out[f"{a}->{b}"] = round((tb - ta).total_seconds(), 3)
+        tot = self.total_latency()
+        out["heard->spoken"] = round(tot, 3) if tot is not None else None
+        return out
+
+    def to_record(self) -> dict:
+        """Собранная история одной реплики — для постоянного хранилища
+        (store.py) и для 'analytics.py trace'."""
+        first = self.stage_ts.get("heard") or (self.events[0]["_dt"] if self.events else now_aware())
+        last = self.events[-1]["_dt"] if self.events else first
+        return {
+            "trace_id": self.trace_id,
+            "started_at": first.isoformat(timespec="seconds"),
+            "ended_at": last.isoformat(timespec="seconds"),
+            "furthest": self.furthest_key,
+            "status": self.status,
+            "label": self.label,
+            "goal": self.goal,
+            "outcome": self.outcome,
+            "silent": self.silent,
+            "failure": self.failure[0] if self.failure else None,
+            "latency_sec": self.gap_latencies(),
+            "events": [
+                {"ts": e["_dt"].isoformat(timespec="seconds"),
+                 "module": e.get("module"), "message": e.get("message"),
+                 "level": e.get("level"), "data": e.get("data") or {}}
+                for e in self.events
+            ],
+        }
 
 
 # ─────────────────────────── воронка ────────────────────────────────
@@ -526,43 +562,82 @@ def print_report(since: datetime, events: list[dict], as_json: bool) -> None:
 
 # ─────────────────────────── trace / traces ────────────────────────
 
-def print_trace(trace_id: str, since: datetime) -> None:
-    events = [ev for ev in load_events(since) if ev.get("trace_id") == trace_id]
-    if not events:
-        print(f"[analytics] реплика {trace_id!r} не найдена за окно (расширь --last)")
-        return
-    tv = TraceView(trace_id, events)
-    print(f"\n═══ trace {trace_id} ═══")
-    print(f"докуда дошла: {tv.furthest_key}   статус: {tv.status}"
-          + (f"   цель: {tv.goal}" if tv.goal else "")
-          + (f"   outcome: {tv.outcome}" if tv.outcome else ""))
-    tot = tv.total_latency()
+def _render_trace_record(rec: dict) -> None:
+    """Печатает историю одной реплики из record-словаря (одинаковый вид
+    и у store, и у собранного на лету TraceView.to_record())."""
+    print(f"\n═══ trace {rec['trace_id']} ═══")
+    line = f"докуда дошла: {rec.get('furthest', '—')}   статус: {rec.get('status', '—')}"
+    if rec.get("goal"):
+        line += f"   цель: {rec['goal']}"
+    if rec.get("outcome"):
+        line += f"   outcome: {rec['outcome']}"
+    if rec.get("failure"):
+        line += f"   провал: {rec['failure']}"
+    print(line)
+    tot = (rec.get("latency_sec") or {}).get("heard->spoken")
     if tot is not None:
         print(f"всего микрофон→озвучка: {fmt_dur(tot)}")
+    gaps = {k: v for k, v in (rec.get("latency_sec") or {}).items() if k != "heard->spoken" and v}
+    if gaps:
+        print("по участкам: " + "  ".join(f"{k} {v:g}s" for k, v in gaps.items()))
     print()
     prev = None
-    for ev in events:
-        dt = ev["_dt"]
+    for e in rec.get("events", []):
+        dt = parse_ts(e.get("ts", "")) or prev or now_aware()
         delta = f"+{(dt - prev).total_seconds():5.1f}s" if prev else "   —   "
         prev = dt
-        data = ev.get("data") or {}
-        keep = {k: data[k] for k in ("text", "label", "goal", "outcome", "error", "reason", "source", "engine")
+        data = e.get("data") or {}
+        keep = {k: data[k] for k in
+                ("text", "label", "goal", "outcome", "error", "reason", "source", "engine", "wakeword")
                 if k in data}
-        print(f"  {dt.strftime('%H:%M:%S')} {delta}  {ev.get('module'):<16} {ev.get('message'):<26} "
+        print(f"  {dt.strftime('%H:%M:%S')} {delta}  {str(e.get('module')):<16} {str(e.get('message')):<26} "
               f"{json.dumps(keep, ensure_ascii=False) if keep else ''}")
     print()
 
 
-def print_traces(since: datetime, limit: int) -> None:
+def print_trace(trace_id: str, since: datetime) -> None:
+    # 1) постоянное хранилище (мгновенно, если watch его писал)
+    store = TraceStore(CFG, SCRIPT_DIR)
+    rec = store.load_one(trace_id) if store.enabled else None
+    if rec:
+        _render_trace_record(rec)
+        print("(из хранилища logs/analytics/traces/)")
+        return
+    # 2) иначе — собрать на лету из сырых логов за окно
+    events = [ev for ev in load_events(since) if ev.get("trace_id") == trace_id]
+    if not events:
+        print(f"[analytics] реплика {trace_id!r} не найдена (нет в хранилище и в окне --last)")
+        return
+    _render_trace_record(TraceView(trace_id, events).to_record())
+    print("(собрано из сырых логов)")
+
+
+def _print_traces_table(rows: list[dict]) -> None:
+    print(f"  {'начало':<19} {'trace_id':<26} {'докуда':<11} {'статус':<9} {'цель':<20} задержка")
+    for r in rows:
+        started = (r.get("started_at") or "")[:19] or "—"
+        print(f"  {started:<19} {str(r.get('trace_id', '—')):<26} "
+              f"{str(r.get('furthest', '—')):<11} {str(r.get('status', '—')):<9} "
+              f"{str(r.get('goal') or '—'):<20} {fmt_dur(r.get('total_sec'))}")
+
+
+def print_traces(since: datetime, limit: int, raw: bool) -> None:
+    store = TraceStore(CFG, SCRIPT_DIR)
+    if not raw and store.enabled and store.index_path.exists():
+        rows = [r for r in store.read_index()
+                if (parse_ts(r.get("started_at", "")) or now_aware()) >= since]
+        rows = rows[-limit:]
+        print(f"\n═══ последние {len(rows)} реплик (из хранилища) ═══")
+        _print_traces_table(rows)
+        print()
+        return
     traces = [TraceView(tid, evs) for tid, evs in by_trace(load_events(since)).items()]
     traces.sort(key=lambda t: t.stage_ts.get("heard") or now_aware())
-    traces = traces[-limit:]
-    print(f"\n═══ последние {len(traces)} реплик ═══")
-    print(f"  {'время':<8} {'trace_id':<26} {'докуда':<11} {'статус':<9} {'цель':<20} задержка")
-    for t in traces:
-        hd = t.stage_ts.get("heard")
-        print(f"  {hd.strftime('%H:%M:%S') if hd else '  —  ':<8} {t.trace_id:<26} "
-              f"{t.furthest_key:<11} {t.status:<9} {(t.goal or '—'):<20} {fmt_dur(t.total_latency())}")
+    rows = [t.to_record() for t in traces[-limit:]]
+    for r in rows:  # выровнять поле под ту же таблицу
+        r["total_sec"] = (r.get("latency_sec") or {}).get("heard->spoken")
+    print(f"\n═══ последние {len(rows)} реплик (из сырых логов) ═══")
+    _print_traces_table(rows)
     print()
 
 
@@ -573,15 +648,32 @@ def run_watch() -> None:
     poll = float(w["poll_interval_sec"])
     win_min = float(w["report_window_min"])
     emitted: dict[str, datetime] = {}
-    print(f"[analytics] watch: окно {win_min:.0f}мин, опрос каждые {poll:.0f}с. Ctrl+C — выход.")
-    send_log("INFO", "watch_started", {"window_min": win_min, "poll_sec": poll})
+
+    store = TraceStore(CFG, SCRIPT_DIR)
+    store.prune(log=lambda lvl, msg, data: send_log(lvl, msg, data))
+
+    print(f"[analytics] watch: окно {win_min:.0f}мин, опрос каждые {poll:.0f}с. "
+          f"хранилище команд: {'вкл (' + str(store.root) + ')' if store.enabled else 'выкл'}. Ctrl+C — выход.")
+    send_log("INFO", "watch_started", {"window_min": win_min, "poll_sec": poll, "store": store.enabled})
     try:
         while True:
             since = now_aware() - timedelta(minutes=win_min)
             events = load_events(since)
-            traces = [TraceView(tid, evs) for tid, evs in by_trace(events).items()]
+            trace_views = [TraceView(tid, evs) for tid, evs in by_trace(events).items()]
+            traces = trace_views
             fn = funnel(traces)
             an = anomalies(events, since)
+
+            # ── постоянное хранилище истории по каждой команде
+            if store.enabled:
+                for tv in trace_views:
+                    rec = tv.to_record()
+                    store.write(rec)
+                    last = tv.events[-1]["_dt"] if tv.events else since
+                    closed = (tv.outcome is not None
+                              or (now_aware() - last).total_seconds() > store.idle_close_sec)
+                    if closed:
+                        store.index_once(rec)
 
             # аномалии -> в шину логов (повторно не чаще ширины окна)
             if w["emit_anomaly_events"]:
@@ -601,9 +693,10 @@ def run_watch() -> None:
                 })
 
             warn = sum(1 for x in an if x["level"] == "WARNING")
+            stored = f" сохранено={len(store._indexed)}" if store.enabled else ""
             print(f"[analytics] {now_aware().strftime('%H:%M:%S')}  события={len(events)} "
                   f"реплики={len(traces)} озвучено={fn['spoken_ok']} NEVER={fn['spoken_never']} "
-                  f"аномалии={len(an)} (⚠{warn})")
+                  f"аномалии={len(an)} (⚠{warn}){stored}")
             for x in an:
                 if x["level"] == "WARNING":
                     print(f"           ⚠ {x['title']}")
@@ -628,11 +721,12 @@ def main() -> None:
     p_tr.add_argument("trace_id")
     p_tr.add_argument("--last", default="7d", help="как глубоко искать (по умолчанию 7d)")
 
-    p_trs = sub.add_parser("traces", help="список последних реплик")
-    p_trs.add_argument("--last", help="длина окна")
+    p_trs = sub.add_parser("traces", help="список последних реплик (из хранилища, если есть)")
+    p_trs.add_argument("--last", help="ограничить по времени начала: 24h / 7d")
     p_trs.add_argument("-n", type=int, default=20, help="сколько показать")
+    p_trs.add_argument("--raw", action="store_true", help="не хранилище, а свежий разбор сырых логов")
 
-    sub.add_parser("watch", help="демон: аномалии в шину логов + сводка")
+    sub.add_parser("watch", help="демон: хранилище истории по командам + аномалии в шину логов")
 
     args = ap.parse_args()
     default_hours = CFG["window"]["default_hours"]
@@ -644,8 +738,9 @@ def main() -> None:
     elif args.cmd == "trace":
         print_trace(args.trace_id, parse_since(args.last, default_hours))
     elif args.cmd == "traces":
-        since = parse_since(args.last, default_hours)
-        print_traces(since, args.n)
+        # список — это про историю, поэтому по умолчанию окно шире отчёта
+        since = parse_since(args.last, CFG["store"]["keep_days"] * 24)
+        print_traces(since, args.n, raw=args.raw)
     elif args.cmd == "watch":
         run_watch()
 

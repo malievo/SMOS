@@ -111,6 +111,7 @@ Raspberry Pi, и на сервере без экрана.
 | Логирование (`logs/`) | ✅ работает |
 | Сквозной `trace_id` одной реплики через весь пайплайн (`rvs → classifier → swl → core → outputstructurizer → cnps`) — см. `logs/PROTOCOL.md` | ✅ |
 | Аналитический слой поверх сырых логов (`logs/analytics/`): воронка (где теряются команды), разбор задержки по стадиям, аномалии/здоровье, поведение; `report` / `trace <id>` / `traces` / `watch` | ✅ v1 (ветка `dev/analytics`) |
+| Наблюдение за командой: `watch` собирает события каждой команды по `trace_id` в `logs/analytics/traces/<id>.json` (+ `index.jsonl`) — историю прохода можно посмотреть потом мгновенно | ✅ v1 |
 | Единый запуск/остановка + проверка обновления при старте (`smos.py`) | ✅ |
 | Механизм обновления (`updater/`): версия с GitHub, голосовое да/нет/потом, бэкап + подмена `system/`+`smos.py`, откат по health-check | ✅ построен и проверен вживую, вышел в v1.1.0 |
 | Голос системы (`system/sysaudio/`): заранее записанные офлайн-клипы для служебных объявлений | ✅ 11 клипов (Piper), подключён в `smos.py` и `updater.py`, вышел в v1.1.0 |
@@ -184,7 +185,8 @@ logs/
   listener/     демон-приёмник логов (UDP :47110)
   analytics/    аналитический слой: воронка/задержка/аномалии/поведение
                 поверх raw/*.jsonl (analytics.py report|trace|traces|watch);
-                только чтение, в smos.py PROCESSES не входит — см. analytics_design.md
+                watch собирает историю по каждой команде в traces/<id>.json.
+                Только чтение raw, в smos.py PROCESSES не входит — см. analytics_design.md
   PROTOCOL.md   как модулю слать события (+ trace_id — путь одной реплики)
 user/           данные пользователя (в .gitignore, кроме configs/)
   configs/        *.json — настройки процессов (значения по умолчанию — в коде)
