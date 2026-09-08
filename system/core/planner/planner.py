@@ -46,7 +46,7 @@ def find_action_that_produces(target_key: str, graph: dict):
     return None
 
 
-def call_module(action: dict, command: str, params: dict) -> dict:
+def call_module(action: dict, command: str, params: dict, trace_id: str | None = None) -> dict:
     """Запускает модуль как процесс, передаёт command+params, читает
     JSON-ответ из stdout. Протокол — см. ../module_init/manifest_design.md.
 
@@ -59,10 +59,17 @@ def call_module(action: dict, command: str, params: dict) -> dict:
     папка отдельно от кода модуля и переживает его
     удаление/переустановку (см. manifest_design.md, раздел "Хранение
     данных модуля"). Что и как хранить внутри — дело модуля, система
-    только выделяет место."""
+    только выделяет место.
+
+    trace_id (если задан) пробрасывается модулю в переменной окружения
+    SMOS_TRACE_ID — модуль может проставить его в свои логи, чтобы
+    попасть в общую историю реплики (см. logs/PROTOCOL.md). Ошибки
+    вызова модуля логируются здесь уже с этим trace_id."""
     data_dir = Path(action["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "SMOS_MODULE_DATA": str(data_dir)}
+    if trace_id:
+        env["SMOS_TRACE_ID"] = trace_id
 
     cmd = [*action["entrypoint"], command, json.dumps(params, ensure_ascii=False)]
 
@@ -76,13 +83,13 @@ def call_module(action: dict, command: str, params: dict) -> dict:
             timeout=DEFAULT_TIMEOUT_SEC,
         )
     except subprocess.TimeoutExpired:
-        send_log("ERROR", "module_timeout", {"module": action["module"], "command": command})
+        send_log("ERROR", "module_timeout", {"module": action["module"], "command": command}, trace_id=trace_id)
         return {"status": "error", "error": "таймаут"}
 
     if result.returncode != 0:
         send_log("ERROR", "module_crashed", {
             "module": action["module"], "command": command, "stderr": result.stderr,
-        })
+        }, trace_id=trace_id)
         return {"status": "error", "error": f"процесс завершился с кодом {result.returncode}"}
 
     try:
@@ -90,11 +97,12 @@ def call_module(action: dict, command: str, params: dict) -> dict:
     except json.JSONDecodeError as e:
         send_log("ERROR", "module_bad_output", {
             "module": action["module"], "command": command, "stdout": result.stdout,
-        })
+        }, trace_id=trace_id)
         return {"status": "error", "error": f"не удалось разобрать ответ модуля: {e}"}
 
 
-def achieve(target_key: str, state: dict, graph: dict, _resolving: set | None = None):
+def achieve(target_key: str, state: dict, graph: dict, _resolving: set | None = None,
+            trace_id: str | None = None):
     """Рекурсивно разрешает target_key, при необходимости вызывая
     другие модули за недостающими данными.
 
@@ -102,6 +110,8 @@ def achieve(target_key: str, state: dict, graph: dict, _resolving: set | None = 
       пополняется по ходу выполнения.
     - graph — реестр действий, module_init.registry.build_registry().
     - _resolving — защита от циклов в манифестах, не передавать вручную.
+    - trace_id — сквозной id реплики (см. logs/PROTOCOL.md), едет в
+      вызовы модулей и в логи ошибок.
     """
     if target_key in state:
         return state[target_key]
@@ -119,15 +129,15 @@ def achieve(target_key: str, state: dict, graph: dict, _resolving: set | None = 
 
     params = {}
     for need in action["needs"]:
-        params[need] = achieve(need, state, graph, _resolving)
+        params[need] = achieve(need, state, graph, _resolving, trace_id)
 
-    response = call_module(action, command, params)
+    response = call_module(action, command, params, trace_id)
 
     if response.get("status") == "missing":
         # модуль сам, в рантайме, попросил что-то сверх заявленных needs
         for key in response.get("missing", []):
-            state[key] = achieve(key, state, graph, _resolving)
-        response = call_module(action, command, {**params, **state})
+            state[key] = achieve(key, state, graph, _resolving, trace_id)
+        response = call_module(action, command, {**params, **state}, trace_id)
 
     _resolving.discard(target_key)
 

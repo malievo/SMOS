@@ -10,6 +10,11 @@ listener.py — демон-приёмник логов SMOS.
 
 Что отправляет модуль (три обязательных поля + необязательные данные):
     {"module": "rvs", "level": "INFO", "message": "wake_word_detected", "data": {...}}
+Необязательно — "trace_id": сквозной id одной реплики пользователя, едет
+по всей цепочке rvs->classifier->swl->core->outputstructurizer->cnps
+(см. PROTOCOL.md). Демон кладёт его в событие как отдельное поле (или
+None, если стадия его не прислала) — по нему logs/analytics/ потом
+собирает историю одной фразы.
 Время (ts) модуль НЕ указывает — его проставляет этот демон в момент
 приёма, чтобы не зависеть от того, насколько точно настроены часы у
 конкретного модуля, и чтобы формат времени был одинаковым везде.
@@ -104,6 +109,9 @@ def handle_packet(raw_bytes: bytes, addr) -> None:
         "level": level,
         "message": message,
         "data": payload.get("data"),
+        # Сквозной id одной реплики пользователя (см. PROTOCOL.md). Есть
+        # не у всех событий — служебные/фоновые его не шлют; тогда None.
+        "trace_id": payload.get("trace_id"),
     }
 
     module_dir = RAW_DIR / str(module)

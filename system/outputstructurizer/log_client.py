@@ -23,13 +23,16 @@ MODULE_NAME = "outputstructurizer"
 _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 
-def send_log(level: str, message: str, data: dict | None = None) -> None:
+def send_log(level: str, message: str, data: dict | None = None,
+             trace_id: str | None = None) -> None:
     """Отправляет одно лог-событие. level — DEBUG/INFO/WARNING/ERROR/CRITICAL,
     message — короткий машинно-читаемый код события, data — необязательные
     подробности."""
     payload = {"module": MODULE_NAME, "level": level, "message": message}
     if data:
         payload["data"] = data
+    if trace_id:
+        payload["trace_id"] = trace_id  # сквозной id одной реплики, см. logs/PROTOCOL.md
     try:
         _sock.sendto(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"), (LOG_HOST, LOG_PORT))
     except (OSError, TypeError, ValueError):

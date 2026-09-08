@@ -74,13 +74,16 @@ def load_recognized() -> dict:
     return json.loads(RECOGNIZED_FILE.read_text(encoding="utf-8"))
 
 
-def save_result(text: str, label: str) -> None:
+def save_result(text: str, label: str, trace_id: str = "") -> None:
     """Пишет classified.json атомарно (temp-файл + rename) — тот же
-    приём, что и в wake.py для utterance.wav."""
+    приём, что и в wake.py для utterance.wav. trace_id (сквозной id
+    реплики) кладём в файл — его читает swl.py и везёт дальше, см.
+    logs/PROTOCOL.md."""
     OUTPUT_DIR.mkdir(exist_ok=True)
     payload = {
         "text": text,
         "label": label,
+        "trace_id": trace_id,
         "timestamp": datetime.now().astimezone().isoformat(),
     }
     tmp_file = OUTPUT_FILE.with_suffix(".tmp")
@@ -185,35 +188,35 @@ def try_train_and_reload(state: dict) -> dict:
 
 # --- Обработка одной новой фразы ---
 
-def handle_phrase(text: str, state: dict) -> dict:
+def handle_phrase(text: str, state: dict, trace_id: str = "") -> dict:
     if is_offline_only():
         # OFFLINE: финал. Только локальная модель, онлайн-ИИ не трогаем никогда.
         try:
             label = local_classify(text)
         except Exception as e:
-            send_log("ERROR", "local_classification_failed", {"text": text, "error": str(e)})
+            send_log("ERROR", "local_classification_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
             print(f"[classifier] ошибка локальной классификации: {e}")
             return state
 
-        save_result(text, label)
-        send_log("INFO", "phrase_classified", {"text": text, "label": label, "source": "local"})
+        save_result(text, label, trace_id)
+        send_log("INFO", "phrase_classified", {"text": text, "label": label, "source": "local"}, trace_id=trace_id)
         print(f"[classifier] (офлайн) {label}: {text}")
         return state
 
     if is_promoted():
-        return handle_validation_phrase(text, state)
+        return handle_validation_phrase(text, state, trace_id)
 
     # BOOTSTRAP / SHADOW: реальный ответ всегда даёт онлайн-ИИ.
     try:
         teacher_label = ai_classify(text)
     except Exception as e:
-        send_log("ERROR", "classification_failed", {"text": text, "error": str(e)})
+        send_log("ERROR", "classification_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
         print(f"[classifier] ошибка классификации: {e}")
         return state
 
-    save_result(text, teacher_label)
+    save_result(text, teacher_label, trace_id)
     append_to_dataset(text, teacher_label)
-    send_log("INFO", "phrase_classified", {"text": text, "label": teacher_label, "source": "llm_api"})
+    send_log("INFO", "phrase_classified", {"text": text, "label": teacher_label, "source": "llm_api"}, trace_id=trace_id)
     print(f"[classifier] {teacher_label}: {text}")
 
     if local_provider.is_available():
@@ -221,7 +224,7 @@ def handle_phrase(text: str, state: dict) -> dict:
         try:
             challenger_label = local_classify(text)
         except Exception as e:
-            send_log("ERROR", "shadow_classification_failed", {"text": text, "error": str(e)})
+            send_log("ERROR", "shadow_classification_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
             print(f"[classifier] ошибка теневой классификации: {e}")
             return state
 
@@ -235,6 +238,7 @@ def handle_phrase(text: str, state: dict) -> dict:
             "INFO",
             "shadow_comparison",
             {"text": text, "teacher": teacher_label, "challenger": challenger_label, "agree": agree},
+            trace_id=trace_id,
         )
         print(f"[classifier] (shadow) локальная модель сказала {challenger_label}, {'совпало' if agree else 'РАСХОЖДЕНИЕ'}")
 
@@ -256,7 +260,7 @@ def handle_phrase(text: str, state: dict) -> dict:
     return state
 
 
-def handle_validation_phrase(text: str, state: dict) -> dict:
+def handle_validation_phrase(text: str, state: dict, trace_id: str = "") -> dict:
     """VALIDATING: реальный ответ уже даёт локальная модель. Онлайн-ИИ
     параллельно ещё спрашивается — ограниченное число раз
     (POST_PROMOTION_VALIDATION_COMPARISONS) — только для проверки,
@@ -265,12 +269,12 @@ def handle_validation_phrase(text: str, state: dict) -> dict:
     try:
         label = local_classify(text)
     except Exception as e:
-        send_log("ERROR", "local_classification_failed", {"text": text, "error": str(e)})
+        send_log("ERROR", "local_classification_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
         print(f"[classifier] ошибка локальной классификации: {e}")
         return state
 
-    save_result(text, label)
-    send_log("INFO", "phrase_classified", {"text": text, "label": label, "source": "local"})
+    save_result(text, label, trace_id)
+    send_log("INFO", "phrase_classified", {"text": text, "label": label, "source": "local"}, trace_id=trace_id)
     print(f"[classifier] (проверка) {label}: {text}")
 
     try:
@@ -278,7 +282,7 @@ def handle_validation_phrase(text: str, state: dict) -> dict:
     except Exception as e:
         # Проверка не смогла состояться в этот раз — не страшно, просто
         # пропускаем её, ответ пользователю уже ушёл от локальной модели.
-        send_log("ERROR", "validation_check_failed", {"text": text, "error": str(e)})
+        send_log("ERROR", "validation_check_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
         print(f"[classifier] проверочный запрос к онлайн-ИИ не удался: {e}")
         return state
 
@@ -293,6 +297,7 @@ def handle_validation_phrase(text: str, state: dict) -> dict:
         "INFO",
         "validation_comparison",
         {"text": text, "local": label, "teacher": teacher_label, "agree": agree},
+        trace_id=trace_id,
     )
     print(f"[classifier] (проверка) онлайн-ИИ сказал {teacher_label}, {'совпало' if agree else 'РАСХОЖДЕНИЕ'}")
 
@@ -346,8 +351,9 @@ def main() -> None:
                     continue
 
                 text = recognized.get("text", "").strip()
+                trace_id = recognized.get("trace_id") or ""
                 if text:
-                    state = handle_phrase(text, state)
+                    state = handle_phrase(text, state, trace_id)
 
         time.sleep(CHECK_INTERVAL_SEC)
 

@@ -94,6 +94,7 @@ class Task:
     goal: str | None = None
     intent: str | None = None
     reply_to: str | None = None
+    trace_id: str = ""              # сквозной id реплики (см. logs/PROTOCOL.md) — CNPS его финальное звено
     full_text: str = ""
     engine: str = "piper"           # движок синтеза для speech (gtts|piper|spd-say)
 
@@ -115,8 +116,8 @@ class Task:
             id=f"{self.id}~r{uuid.uuid4().hex[:4]}",
             kind=self.kind, source=self.source, cls=self.cls, params=dict(self.params),
             created_at=time.time(), sentences=list(self.sentences), is_file=self.is_file,
-            goal=self.goal, intent=self.intent, reply_to=self.reply_to, full_text=self.full_text,
-            engine=self.engine,
+            goal=self.goal, intent=self.intent, reply_to=self.reply_to, trace_id=self.trace_id,
+            full_text=self.full_text, engine=self.engine,
         )
         t.sentence_idx = 0 if from_start else min(self.sentence_idx, max(0, len(self.sentences) - 1))
         t.bypass_ttl = True
@@ -167,8 +168,9 @@ class CNPS:
 
     # ---- логирование --------------------------------------------------
 
-    def _log(self, level: str, message: str, data: dict | None = None) -> None:
-        send_log(level, message, data)
+    def _log(self, level: str, message: str, data: dict | None = None,
+             trace_id: str | None = None) -> None:
+        send_log(level, message, data, trace_id=trace_id)
 
     # ---- приём заявок (intake thread) --------------------------------
 
@@ -216,6 +218,7 @@ class CNPS:
             goal=manifest.get("goal"),
             intent=manifest.get("intent") or manifest.get("task_id"),
             reply_to=manifest.get("reply_to"),
+            trace_id=manifest.get("trace_id") or "",
         )
 
         if kind == "speech":
@@ -254,7 +257,7 @@ class CNPS:
             "id": task.id, "kind": kind, "class": cls, "source": task.source or None,
             "engine": engine, "sentences": len(task.sentences), "clamped": info["clamped"],
             "requested": info["requested"], "ceiling": info["ceiling"],
-        })
+        }, trace_id=task.trace_id or None)
         return task
 
     def _control_from_manifest(self, manifest: dict) -> dict:
@@ -358,7 +361,8 @@ class CNPS:
             return
         if class_rank(cand.cls) < class_rank(cur.cls) and cur.params.get("preemptible", True):
             cur.state = "deferred"   # sentence_idx уже указывает на точку возобновления
-            self._log("INFO", "preempted", {"held": cur.id, "by": cand.id, "at_sentence": cur.sentence_idx})
+            self._log("INFO", "preempted", {"held": cur.id, "by": cand.id, "at_sentence": cur.sentence_idx},
+                      trace_id=cur.trace_id or None)
             self._activate(cand)
 
     def _finish(self, task: Task, outcome: str, swept: bool = False) -> None:
@@ -374,7 +378,7 @@ class CNPS:
             "goal": task.goal, "intent": task.intent,
             "played_sentences": task.sentence_idx, "total": len(task.sentences),
             "swept": swept,
-        })
+        }, trace_id=task.trace_id or None)
         print(f"[cnps] {outcome} {task.id} ({task.cls}) {task.sentence_idx}/{len(task.sentences)}")
 
     def _prepare(self, task: Task, idx: int):

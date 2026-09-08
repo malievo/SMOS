@@ -79,11 +79,12 @@ def _emit_completion(record: dict, source_text: str | None) -> None:
     словарь с "silent"/"_silent" == true, задачу озвучивать не надо.
     Так модуль mod_playback гасит текстовое подтверждение поверх
     только что оборванной озвучки. В очередь ничего не кладём."""
+    trace_id = record.get("trace_id") or ""
     result = record.get("result")
     if isinstance(result, dict) and (result.get("silent") or result.get("_silent")):
         send_log("INFO", "completion_silent", {
             "task_id": record["task_id"], "goal": record["goal"], "status": record["status"],
-        })
+        }, trace_id=trace_id)
         return
 
     OUTPUTSTRUCTURIZER_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
@@ -95,6 +96,9 @@ def _emit_completion(record: dict, source_text: str | None) -> None:
         "error": record["error"],
         "state": record["state"],
         "source_text": source_text,
+        # Сквозной id реплики — outputstructurizer везёт его дальше в
+        # заявку CNPS (см. logs/PROTOCOL.md).
+        "trace_id": trace_id,
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     name = f"{record['task_id']}.json"
@@ -104,52 +108,57 @@ def _emit_completion(record: dict, source_text: str | None) -> None:
 
 
 def _run_task(task_id: str, goal: str, initial_state: dict, graph: dict,
-              source_text: str | None = None) -> None:
+              source_text: str | None = None, trace_id: str | None = None) -> None:
     """Код одного потока задачи. Обычный последовательный/блокирующий
     код — блокируется сам на себя (внутри achieve(), на вызовах
     модулей), но это не блокирует ядро в целом, см. create_task().
 
     source_text — исходная фраза пользователя (от SWL через ядро), едет
     дальше в очередь результатов: формулировка ответа зависит от того,
-    как спросили ("сколько времени" vs "который час")."""
+    как спросили ("сколько времени" vs "который час").
+
+    trace_id — сквозной id реплики (см. logs/PROTOCOL.md): кладётся в
+    state.json, в лог-события задачи и дальше в очередь результатов."""
     task_dir = TASKS_DIR / task_id
     record = {
         "task_id": task_id,
         "goal": goal,
+        "trace_id": trace_id or "",
         "state": dict(initial_state),
         "status": "running",
         "result": None,
         "error": None,
     }
     _save_state(task_dir, record)
-    send_log("INFO", "task_started", {"task_id": task_id, "goal": goal})
+    send_log("INFO", "task_started", {"task_id": task_id, "goal": goal}, trace_id=trace_id)
 
     try:
-        result = planner.achieve(goal, record["state"], graph)
+        result = planner.achieve(goal, record["state"], graph, trace_id=trace_id)
         record["status"] = "done"
         record["result"] = result
-        send_log("INFO", "task_done", {"task_id": task_id, "goal": goal})
+        send_log("INFO", "task_done", {"task_id": task_id, "goal": goal}, trace_id=trace_id)
     except planner.PlanningError as e:
         record["status"] = "error"
         record["error"] = str(e)
-        send_log("ERROR", "task_failed", {"task_id": task_id, "goal": goal, "error": str(e)})
+        send_log("ERROR", "task_failed", {"task_id": task_id, "goal": goal, "error": str(e)}, trace_id=trace_id)
 
     _save_state(task_dir, record)
     _emit_completion(record, source_text)
 
 
 def create_task(goal: str, initial_state: dict, graph: dict,
-                source_text: str | None = None) -> str:
+                source_text: str | None = None, trace_id: str | None = None) -> str:
     """Создаёт задачу и сразу возвращает её id, не дожидаясь
     выполнения — сама задача выполняется в отдельном потоке. Вызывающий
     код (главный цикл ядра) тут же свободен принимать следующую цель —
     это и есть требование "ядро асинхронно" из core_design.md.
 
     source_text — необязательная исходная фраза, пробрасывается в
-    файл-результат для стадии формулировки ответа."""
+    файл-результат для стадии формулировки ответа.
+    trace_id — необязательный сквозной id реплики (см. logs/PROTOCOL.md)."""
     task_id = _new_task_id()
     thread = threading.Thread(
-        target=_run_task, args=(task_id, goal, initial_state, graph, source_text), daemon=True
+        target=_run_task, args=(task_id, goal, initial_state, graph, source_text, trace_id), daemon=True
     )
     thread.start()
     return task_id

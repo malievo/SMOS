@@ -1,0 +1,43 @@
+{
+  "_comment": "Настройки аналитического слоя логов (logs/analytics). Меняй значения и перезапускай 'analytics.py watch' (разовые отчёты перечитывают файл при каждом запуске). Любое поле можно удалить — тогда берётся значение по умолчанию из logs/analytics/config.py (DEFAULTS). Поля '_comment' скрипт не использует. Полный разбор — logs/analytics/analytics_design.md.",
+
+  "window": {
+    "_comment": "default_hours — за какой период считать 'analytics.py report' без --since/--last.",
+    "default_hours": 24
+  },
+
+  "latency": {
+    "_comment": "Пороги 'медленно' для промежутков между стадиями (сек). ts в логах с разрешением 1 сек, поэтому доли секунды не видны — пороги имеют смысл только для долгих участков (STT, GigaChat у SWL, синтез+озвучка). Ключи — из logs/analytics/pipeline.py (GAP_KEYS).",
+    "slow_gap_sec": {
+      "recorded->stt": 6.0,
+      "classified->intent": 6.0,
+      "dispatched->executed": 5.0,
+      "phrased->spoken": 10.0,
+      "heard->spoken": 20.0
+    }
+  },
+
+  "anomaly": {
+    "_comment": "hang_timeout_sec — task_started без task_done/task_failed дольше этого = 'завис'. restart_flap_* — больше N запусков системы за окно = 'хлопает'. error_spike_per_hour — ERROR+CRITICAL в час на модуль выше = всплеск. stt_failure_rate_warn — доля неудачных распознаваний. mute_flag_stuck_sec — активный mute.flag, не обновлявшийся столько секунд = возможный дедлок (CNPS упал в середине озвучки).",
+    "hang_timeout_sec": 30,
+    "restart_flap_window_sec": 300,
+    "restart_flap_count": 3,
+    "error_spike_per_hour": 10,
+    "stt_failure_rate_warn": 0.4,
+    "mute_flag_stuck_sec": 20
+  },
+
+  "watch": {
+    "_comment": "poll_interval_sec — как часто watch перечитывает свежие события. report_window_min — ширина скользящего окна для аномалий. emit_anomaly_events / emit_summary_events — слать ли найденное обратно в шину логов (module='analytics'), чтобы это было видно в общем отчёте и (позже) через CNPS как голосовое предупреждение.",
+    "poll_interval_sec": 60,
+    "report_window_min": 15,
+    "emit_anomaly_events": true,
+    "emit_summary_events": true
+  },
+
+  "paths": {
+    "_comment": "raw_dir — папка с сырыми событиями, относительно logs/ (на уровень выше analytics/). mute_flag_from_root — путь к mute.flag от корня проекта, analytics его стат'ит для проверки 'залип ли'.",
+    "raw_dir": "raw",
+    "mute_flag_from_root": "system/fwl/rvs/flags/mute.flag"
+  }
+}

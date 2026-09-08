@@ -144,6 +144,7 @@ import collections
 import json
 import sys
 import time
+import uuid
 import wave
 from pathlib import Path
 
@@ -223,6 +224,15 @@ MUTE_FRESHNESS_SEC = CFG["mute"]["freshness_sec"]
 MUTE_RELEASE_COOLDOWN_SEC = CFG["mute"]["release_cooldown_sec"]
 
 
+def _new_trace_id() -> str:
+    """Сквозной id одной реплики пользователя. Рождается здесь, в момент
+    начала записи фразы, и едет по всей цепочке до озвученного ответа
+    (rvs -> classifier -> swl -> core -> outputstructurizer -> cnps) —
+    см. logs/PROTOCOL.md. Формат как у task_id/goal-файлов: время +
+    случайный хвост, чтобы был читаем и уникален."""
+    return f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
 def get_activity_mtime() -> float:
     """Возвращает mtime flags/activity.flag или 0.0, если файла ещё нет."""
     try:
@@ -276,7 +286,7 @@ def _rms(raw_chunk: bytes) -> float:
     return float(np.sqrt(np.mean(samples ** 2)))
 
 
-def save_utterance(chunks) -> None:
+def save_utterance(chunks, trace_id: str) -> None:
     """Сохраняет накопленные чанки одной фразы (довесок ДО слова + сама
     фраза + немного тишины после неё, естественно захваченной, пока мы
     ждали pause_threshold_sec) одним WAV-файлом в flags/utterance.wav.
@@ -284,8 +294,19 @@ def save_utterance(chunks) -> None:
     Пишет АТОМАРНО: сначала во временный файл рядом, потом переименование
     (Path.replace — атомарно на одной файловой системе). Так req.py
     никогда не увидит недописанный/битый WAV, даже если проверит файл
-    ровно в момент записи."""
+    ровно в момент записи.
+
+    trace_id едет с записью в файле-спутнике <utterance>.meta (JSON),
+    который пишется ПЕРЕД самим WAV — req.py, увидев WAV, гарантированно
+    находит рядом и мету. Нет меты (старая версия wake / потеря) —
+    req.py сам заведёт новый trace_id, цепочка просто начнётся с него."""
     FLAGS_DIR.mkdir(exist_ok=True)
+
+    meta_path = UTTERANCE_FILE.with_suffix(UTTERANCE_FILE.suffix + ".meta")
+    meta_tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
+    meta_tmp.write_text(json.dumps({"trace_id": trace_id}, ensure_ascii=False), encoding="utf-8")
+    meta_tmp.replace(meta_path)
+
     tmp_path = UTTERANCE_FILE.parent / (UTTERANCE_FILE.name + ".tmp")
     with wave.open(str(tmp_path), "wb") as wf:
         wf.setnchannels(CHANNELS)
@@ -331,6 +352,7 @@ def main() -> None:
     last_activity_mtime = get_activity_mtime()  # чтобы не среагировать на старый файл при старте
     muted = False  # заглушён ли сейчас вход (см. mic_muted, flags/mute.flag)
     listen_resume_at = 0.0  # после снятия глушения до этого момента ещё не слушаем (эхо в комнате)
+    trace_id = ""  # сквозной id текущей записываемой реплики (см. _new_trace_id, logs/PROTOCOL.md)
 
     try:
         while True:
@@ -381,8 +403,9 @@ def main() -> None:
                     # громкость чанка выше порога, тот же VAD, что определяет
                     # конец фразы в "recording".
                     if _rms(raw_audio) > ENERGY_THRESHOLD:
+                        trace_id = _new_trace_id()
                         print("[wake] Речь обнаружена (режим --nowake) — начинаю запись фразы")
-                        log_client.send_log("INFO", "nowake_recording_started")
+                        log_client.send_log("INFO", "nowake_recording_started", trace_id=trace_id)
                         start_recording = True
                 else:
                     audio_chunk = np.frombuffer(raw_audio, dtype=np.int16)
@@ -398,17 +421,20 @@ def main() -> None:
 
                     if heard_word is not None:
                         last_trigger_time = now
+                        trace_id = _new_trace_id()
                         print(f"[wake] Услышал '{heard_word}' — начинаю запись фразы")
                         log_client.send_log(
                             "INFO", "wake_word_detected",
                             {"wakeword": heard_word, "score": heard_score},
+                            trace_id=trace_id,
                         )
                         start_recording = True
                     elif now < continuation_until and _rms(raw_audio) > ENERGY_THRESHOLD:
                         # Продолжение диалога: слово не звучало, но недавно было
                         # успешное распознавание, и сейчас снова кто-то говорит.
+                        trace_id = _new_trace_id()
                         print("[wake] Продолжение диалога — начинаю запись фразы")
-                        log_client.send_log("INFO", "continuation_recording_started")
+                        log_client.send_log("INFO", "continuation_recording_started", trace_id=trace_id)
                         start_recording = True
 
                 if start_recording:
@@ -440,7 +466,8 @@ def main() -> None:
                     # цикл, от которого защищаемся).
                     if mic_muted(now):
                         print("[wake] Фраза закончилась уже под глушение — запись отброшена, не передаю")
-                        log_client.send_log("INFO", "utterance_discarded_muted", {"reason": reason})
+                        log_client.send_log("INFO", "utterance_discarded_muted", {"reason": reason},
+                                            trace_id=trace_id)
                         utterance_chunks = []
                         ring_buffer.clear()
                         state = "listening"
@@ -449,10 +476,11 @@ def main() -> None:
                             print(f"[wake] Превышена максимальная длина фразы ({MAX_UTTERANCE_SECONDS}с) — заканчиваю запись")
                         else:
                             print("[wake] Тишина — фраза закончена, сохраняю запись")
-                        save_utterance(utterance_chunks)
+                        save_utterance(utterance_chunks, trace_id)
                         log_client.send_log(
                             "INFO", "utterance_saved",
                             {"reason": reason, "duration_sec": round(now - utterance_started_at, 2)},
+                            trace_id=trace_id,
                         )
                         utterance_chunks = []
                         ring_buffer.clear()  # копим довесок заново с чистого листа

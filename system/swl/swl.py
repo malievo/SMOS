@@ -63,7 +63,13 @@ def load_classified() -> dict:
     return json.loads(CLASSIFIED_FILE.read_text(encoding="utf-8"))
 
 
-def write_goal(goal: str, state: dict, source_text: str) -> str:
+def _new_trace_id() -> str:
+    """Запасной trace_id для разового прогона из CLI (когда цепочка не
+    начиналась в wake.py). Формат — как в logs/PROTOCOL.md."""
+    return f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+def write_goal(goal: str, state: dict, source_text: str, trace_id: str) -> str:
     """Кладёт одну цель в папку-очередь ядра. Пишет АТОМАРНО: сначала
     во временный файл рядом, потом переименование — ядро читает эту
     папку в своём цикле и не должно поймать файл на середине записи
@@ -71,7 +77,10 @@ def write_goal(goal: str, state: dict, source_text: str) -> str:
 
     Имя файла начинается с метки времени, чтобы ядро разбирало очередь
     в порядке поступления (см. core.pending_goal_files), плюс короткий
-    случайный хвост на случай двух целей в одну секунду."""
+    случайный хвост на случай двух целей в одну секунду.
+
+    trace_id (сквозной id реплики) кладём в цель — ядро/task_runner
+    везут его дальше, до озвученного ответа (см. logs/PROTOCOL.md)."""
     GOALS_DIR.mkdir(parents=True, exist_ok=True)
     name = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
     payload = {
@@ -79,6 +88,7 @@ def write_goal(goal: str, state: dict, source_text: str) -> str:
         "state": state,
         "origin": "swl",
         "source_text": source_text,
+        "trace_id": trace_id,
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     tmp_file = GOALS_DIR / (name + ".tmp")
@@ -99,28 +109,32 @@ def append_to_dataset(text: str, goal: str | None, params: dict) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def handle_command(text: str) -> None:
-    """Разбирает одну фразу-команду в цель и отправляет её ядру."""
+def handle_command(text: str, trace_id: str = "") -> None:
+    """Разбирает одну фразу-команду в цель и отправляет её ядру.
+    trace_id приходит из classified.json; для разового прогона из CLI
+    его нет — заводим новый, чтобы цепочку всё равно можно было
+    отследить."""
+    trace_id = trace_id or _new_trace_id()
     goals_catalog = catalog.build()
 
     try:
         goal, params = intent_provider.extract(text, goals_catalog)
     except Exception as e:
-        send_log("ERROR", "intent_extraction_failed", {"text": text, "error": str(e)})
+        send_log("ERROR", "intent_extraction_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
         print(f"[swl] ошибка разбора фразы: {e}")
         return
 
     append_to_dataset(text, goal, params)
 
     if goal is None:
-        send_log("INFO", "no_intent_match", {"text": text})
+        send_log("INFO", "no_intent_match", {"text": text}, trace_id=trace_id)
         print(f"[swl] ни одна цель не подошла: {text!r}")
         return
 
-    goal_file = write_goal(goal, params, text)
+    goal_file = write_goal(goal, params, text, trace_id)
     send_log("INFO", "intent_extracted", {
         "text": text, "goal": goal, "params": params, "goal_file": goal_file,
-    })
+    }, trace_id=trace_id)
     print(f"[swl] {text!r} -> цель {goal!r}, параметры {params} -> {goal_file}")
 
 
@@ -151,14 +165,15 @@ def main() -> None:
 
                 text = (classified.get("text") or "").strip()
                 label = classified.get("label")
+                trace_id = classified.get("trace_id") or ""
 
                 if not text:
                     pass
                 elif label == "command":
-                    handle_command(text)
+                    handle_command(text, trace_id)
                 else:
                     # label == "chat" (или что-то ещё) — не забота SWL.
-                    send_log("DEBUG", "skipped_non_command", {"text": text, "label": label})
+                    send_log("DEBUG", "skipped_non_command", {"text": text, "label": label}, trace_id=trace_id)
 
         time.sleep(CHECK_INTERVAL_SEC)
 

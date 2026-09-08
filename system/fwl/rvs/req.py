@@ -42,6 +42,7 @@ import json
 import os
 import sys
 import time
+import uuid
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -78,14 +79,37 @@ SAMPLE_RATE = CFG["audio"]["sample_rate"]
 SAMPLE_WIDTH = CFG["audio"]["bit_depth"] // 8  # байт на сэмпл
 
 
-def load_utterance() -> bytes:
+def _new_trace_id() -> str:
+    """Запасной trace_id, если wake.py не оставил файл-спутник .meta
+    (старая версия wake / потеря файла). Цепочка тогда просто начнётся
+    отсюда. Формат — как у wake._new_trace_id (см. logs/PROTOCOL.md)."""
+    return f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+def load_utterance() -> tuple[bytes, str]:
     """Читает и сразу удаляет flags/utterance.wav — готовую, уже
     полностью записанную wake.py фразу (довесок + сама речь + немного
-    тишины после неё). Возвращает сырые PCM-байты (формат — как в
-    config["audio"]) или b'', если файла ещё нет — это нормальное,
-    основное состояние между фразами."""
+    тишины после неё). Возвращает (сырые PCM-байты, trace_id) или
+    (b'', ""), если файла ещё нет — это нормальное, основное состояние
+    между фразами.
+
+    trace_id берётся из файла-спутника <utterance>.meta, который wake.py
+    пишет ПЕРЕД самим WAV (см. wake.save_utterance). Нет меты — заводим
+    новый id, чтобы цепочка всё равно поехала."""
     if not UTTERANCE_FILE.exists():
-        return b""
+        return b"", ""
+
+    meta_file = UTTERANCE_FILE.with_suffix(UTTERANCE_FILE.suffix + ".meta")
+    trace_id = ""
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        if isinstance(meta, dict) and isinstance(meta.get("trace_id"), str):
+            trace_id = meta["trace_id"]
+    except (OSError, ValueError):
+        pass
+    if not trace_id:
+        trace_id = _new_trace_id()
+
     try:
         with wave.open(str(UTTERANCE_FILE), "rb") as wf:
             frames = wf.readframes(wf.getnframes())
@@ -93,14 +117,15 @@ def load_utterance() -> bytes:
         print(f"[req] Не удалось прочитать utterance.wav: {e}")
         frames = b""
     finally:
-        try:
-            UTTERANCE_FILE.unlink()
-        except FileNotFoundError:
-            pass
-    return frames
+        for f in (UTTERANCE_FILE, meta_file):
+            try:
+                f.unlink()
+            except FileNotFoundError:
+                pass
+    return frames, trace_id
 
 
-def recognize(recognizer: sr.Recognizer, frame_data: bytes) -> dict:
+def recognize(recognizer: sr.Recognizer, frame_data: bytes, trace_id: str = "") -> dict:
     """Отправляет уже готовую (записанную wake.py) фразу в Google STT.
 
     Возвращает словарь {"text": str, "confidence": float | None, "alternatives": list[str]}.
@@ -132,7 +157,7 @@ def recognize(recognizer: sr.Recognizer, frame_data: bytes) -> dict:
         return {"text": "", "confidence": None, "alternatives": []}
     except sr.RequestError as e:
         print(f"[req] Ошибка запроса к Google STT: {e}")
-        log_client.send_log("ERROR", "stt_request_error", {"error": str(e)})
+        log_client.send_log("ERROR", "stt_request_error", {"error": str(e)}, trace_id=trace_id)
         return {"text": "", "confidence": None, "alternatives": []}
 
     alternatives_raw = response.get("alternative", []) if response else []
@@ -148,18 +173,19 @@ def recognize(recognizer: sr.Recognizer, frame_data: bytes) -> dict:
     return {"text": text, "confidence": confidence, "alternatives": alternatives}
 
 
-def save_phrase(result: dict) -> None:
+def save_phrase(result: dict, trace_id: str) -> None:
     """Записывает результат распознавания в выходной файл (перезаписывая
     предыдущий) как JSON: текст + метаданные (уверенность, альтернативные
-    варианты, время, язык). Один файл с последней фразой (перезапись), не
-    журнал — журналом когда-нибудь займётся отдельная система
-    логирования, это не задача rvs."""
+    варианты, время, язык) + trace_id (сквозной id реплики — его читает
+    classifier.py и везёт дальше по цепочке, см. logs/PROTOCOL.md). Один
+    файл с последней фразой (перезапись), не журнал."""
     OUTPUT_DIR.mkdir(exist_ok=True)
     payload = {
         "text": result["text"],
         "confidence": result["confidence"],
         "alternatives": result["alternatives"],
         "language": LANGUAGE,
+        "trace_id": trace_id,
         "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     OUTPUT_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -183,22 +209,22 @@ def main() -> None:
     log_client.send_log("INFO", "req_started")
 
     while True:
-        frame_data = load_utterance()
+        frame_data, trace_id = load_utterance()
 
         if not frame_data:
             time.sleep(CHECK_INTERVAL)
             continue
 
         print("[req] Новая запись — распознаю...")
-        log_client.send_log("INFO", "utterance_received", {"bytes": len(frame_data)})
-        result = recognize(recognizer, frame_data)
+        log_client.send_log("INFO", "utterance_received", {"bytes": len(frame_data)}, trace_id=trace_id)
+        result = recognize(recognizer, frame_data, trace_id)
 
         if result["text"]:
             conf_str = f"{result['confidence']:.2f}" if result["confidence"] is not None else "?"
             print(f"[req] Распознано (confidence={conf_str}): {result['text']}")
             if result["alternatives"]:
                 print(f"[req] Другие варианты: {result['alternatives']}")
-            save_phrase(result)
+            save_phrase(result, trace_id)
             mark_activity()
             log_client.send_log(
                 "INFO", "speech_recognized",
@@ -207,10 +233,11 @@ def main() -> None:
                     "confidence": result["confidence"],
                     "alternatives_count": len(result["alternatives"]),
                 },
+                trace_id=trace_id,
             )
         else:
             print("[req] Речь не распознана.")
-            log_client.send_log("WARNING", "speech_not_recognized")
+            log_client.send_log("WARNING", "speech_not_recognized", trace_id=trace_id)
 
         time.sleep(CHECK_INTERVAL)
 

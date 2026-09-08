@@ -77,16 +77,17 @@ def build_graph() -> dict:
     return graph
 
 
-def _reject(goal_file: Path, reason: str) -> None:
+def _reject(goal_file: Path, reason: str, trace_id: str = "") -> None:
     """Переносит неразобранный файл цели в goals/rejected/ (не удаляет —
-    чтобы можно было посмотреть глазами, что пришло не так) и логирует."""
+    чтобы можно было посмотреть глазами, что пришло не так) и логирует.
+    trace_id — если файл успел разобраться настолько, что известен."""
     REJECTED_DIR.mkdir(parents=True, exist_ok=True)
     dest = REJECTED_DIR / f"{goal_file.stem}_{uuid.uuid4().hex[:8]}.json"
     try:
         goal_file.replace(dest)
     except OSError:
         pass
-    send_log("WARNING", "goal_rejected", {"file": goal_file.name, "reason": reason})
+    send_log("WARNING", "goal_rejected", {"file": goal_file.name, "reason": reason}, trace_id=trace_id)
     print(f"[core] отклонил {goal_file.name}: {reason}")
 
 
@@ -107,26 +108,30 @@ def process_goal_file(goal_file: Path, graph: dict) -> None:
         _reject(goal_file, "цель должна быть JSON-объектом")
         return
 
+    # trace_id (сквозной id реплики, см. logs/PROTOCOL.md) — от SWL;
+    # разбираем сразу, чтобы даже reject ниже попал в ту же историю.
+    trace_id = spec.get("trace_id") or ""
+
     goal = spec.get("goal")
     if not isinstance(goal, str) or not goal:
-        _reject(goal_file, "нет строкового поля 'goal'")
+        _reject(goal_file, "нет строкового поля 'goal'", trace_id)
         return
 
     state = spec.get("state", {})
     if state is None:
         state = {}
     if not isinstance(state, dict):
-        _reject(goal_file, "'state' должно быть JSON-объектом")
+        _reject(goal_file, "'state' должно быть JSON-объектом", trace_id)
         return
 
     source_text = spec.get("source_text")
-    task_id = task_runner.create_task(goal, state, graph, source_text)
+    task_id = task_runner.create_task(goal, state, graph, source_text, trace_id)
     goal_file.unlink(missing_ok=True)
 
     send_log("INFO", "goal_dispatched", {
         "goal": goal, "task_id": task_id, "source_text": source_text,
         "known_keys": sorted(state),
-    })
+    }, trace_id=trace_id)
     print(f"[core] цель {goal!r} -> задача {task_id} (известно заранее: {sorted(state) or '—'})")
 
 

@@ -137,6 +137,9 @@ def emit_audio_task(record: dict, text: str, phrase_layer: str) -> str:
     payload = {
         "id": record["task_id"],
         "task_id": record["task_id"],
+        # Сквозной id реплики — последнее звено, где он ещё передаётся;
+        # CNPS кладёт его в лог delivery (конец истории), см. logs/PROTOCOL.md.
+        "trace_id": record.get("trace_id") or "",
         "kind": "speech",
         # Кто прислал — основной сигнал важности для CNPS.
         "source": "outputstructurizer",
@@ -203,10 +206,12 @@ def process_file(f: Path, phrases: dict, seen: set) -> None:
         send_log("WARNING", "result_rejected", {"file": f.name, "reason": "нет обязательных полей"})
         return
 
+    trace_id = record.get("trace_id") or ""
+
     if task_id in seen:
         # тот же task_id уже обработан в этом запуске — не произносим дважды
         f.unlink(missing_ok=True)
-        send_log("DEBUG", "duplicate_result_skipped", {"task_id": task_id})
+        send_log("DEBUG", "duplicate_result_skipped", {"task_id": task_id}, trace_id=trace_id)
         return
 
     text, source = phrasing.render(record, phrases, CFG)
@@ -220,7 +225,7 @@ def process_file(f: Path, phrases: dict, seen: set) -> None:
     send_log("INFO", "phrase_emitted", {
         "task_id": task_id, "goal": goal, "status": status,
         "source": source, "text": text, "audio_file": audio_file,
-    })
+    }, trace_id=trace_id)
     print(f"[outputstructurizer] {goal!r} [{status}] ({source}) -> {text!r}")
 
 
