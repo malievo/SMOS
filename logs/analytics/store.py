@@ -84,7 +84,9 @@ class TraceStore:
         row = {k: rec.get(k) for k in
                ("trace_id", "started_at", "ended_at", "furthest", "status",
                 "goal", "label", "outcome")}
-        row["total_sec"] = (rec.get("latency_sec") or {}).get("heard->spoken")
+        lat = rec.get("latency_sec") or {}
+        row["exec_sec"] = rec.get("exec_sec", lat.get("heard->phrased"))
+        row["total_sec"] = rec.get("total_sec", lat.get("heard->spoken"))
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             with open(self.index_path, "a", encoding="utf-8") as f:

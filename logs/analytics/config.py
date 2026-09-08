@@ -33,6 +33,7 @@ DEFAULTS = {
             "classified->intent": 6.0,
             "dispatched->executed": 5.0,
             "phrased->spoken": 10.0,
+            "heard->phrased": 8.0,   # выполнение без озвучки
             "heard->spoken": 20.0,
         },
     },

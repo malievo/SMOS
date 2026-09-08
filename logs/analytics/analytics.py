@@ -221,9 +221,25 @@ class TraceView:
         return "dropped"
 
     def total_latency(self):
+        """Полное время: услышана → озвучен ответ."""
         a = self.stage_ts.get("heard")
         b = self.stage_ts.get("spoken")
         return (b - a).total_seconds() if a and b else None
+
+    def exec_latency(self):
+        """Время выполнения БЕЗ озвучки: услышана → готов ответ
+        (phrase_emitted). Отбрасывает последний участок phrased→spoken
+        (синтез речи + воспроизведение CNPS). Если ответ не формулировался
+        (silent / оборвалось раньше) — услышана → самая поздняя
+        достигнутая стадия, кроме spoken."""
+        a = self.stage_ts.get("heard")
+        if not a:
+            return None
+        ends = [ts for k, ts in self.stage_ts.items() if k != "spoken"]
+        if not ends:
+            return None
+        b = max(ends)
+        return (b - a).total_seconds() if b >= a else None
 
     def gap_latencies(self) -> dict:
         out = {}
@@ -233,6 +249,8 @@ class TraceView:
                 out[f"{a}->{b}"] = round((tb - ta).total_seconds(), 3)
         tot = self.total_latency()
         out["heard->spoken"] = round(tot, 3) if tot is not None else None
+        ex = self.exec_latency()
+        out["heard->phrased"] = round(ex, 3) if ex is not None else None
         return out
 
     def to_record(self) -> dict:
@@ -251,6 +269,8 @@ class TraceView:
             "outcome": self.outcome,
             "silent": self.silent,
             "failure": self.failure[0] if self.failure else None,
+            "total_sec": round(self.total_latency(), 3) if self.total_latency() is not None else None,
+            "exec_sec": round(self.exec_latency(), 3) if self.exec_latency() is not None else None,
             "latency_sec": self.gap_latencies(),
             "events": [
                 {"ts": e["_dt"].isoformat(timespec="seconds"),
@@ -309,6 +329,9 @@ def latency(traces: list[TraceView]) -> dict:
         tot = t.total_latency()
         if tot is not None and tot >= 0:
             gaps["heard->spoken"].append(tot)
+        ex = t.exec_latency()
+        if ex is not None and ex >= 0:
+            gaps["heard->phrased"].append(ex)
     return {
         k: {"n": len(v), "p50": pct(v, 50), "p95": pct(v, 95), "max": max(v)}
         for k, v in gaps.items()
@@ -577,7 +600,8 @@ def _render_trace_record(rec: dict) -> None:
     tot = (rec.get("latency_sec") or {}).get("heard->spoken")
     if tot is not None:
         print(f"всего микрофон→озвучка: {fmt_dur(tot)}")
-    gaps = {k: v for k, v in (rec.get("latency_sec") or {}).items() if k != "heard->spoken" and v}
+    gaps = {k: v for k, v in (rec.get("latency_sec") or {}).items()
+            if k not in ("heard->spoken", "heard->phrased") and v}
     if gaps:
         print("по участкам: " + "  ".join(f"{k} {v:g}s" for k, v in gaps.items()))
     print()
@@ -592,6 +616,14 @@ def _render_trace_record(rec: dict) -> None:
                 if k in data}
         print(f"  {dt.strftime('%H:%M:%S')} {delta}  {str(e.get('module')):<16} {str(e.get('message')):<26} "
               f"{json.dumps(keep, ensure_ascii=False) if keep else ''}")
+
+    # итог в конце: время выполнения БЕЗ синтеза речи (услышана → готов ответ)
+    ex = rec.get("exec_sec")
+    if ex is None:
+        ex = (rec.get("latency_sec") or {}).get("heard->phrased")
+    if ex is not None:
+        tail = f"   (полное с озвучкой {fmt_dur(tot).strip()})" if tot is not None else ""
+        print(f"\n── ИТОГ  выполнение без озвучки: {fmt_dur(ex).strip()}{tail}")
     print()
 
 
@@ -613,12 +645,13 @@ def print_trace(trace_id: str, since: datetime) -> None:
 
 
 def _print_traces_table(rows: list[dict]) -> None:
-    print(f"  {'начало':<19} {'trace_id':<26} {'докуда':<11} {'статус':<9} {'цель':<20} задержка")
+    print(f"  {'начало':<19} {'trace_id':<26} {'докуда':<11} {'статус':<9} {'цель':<20} "
+          f"{'без озв.':>8} {'всего':>8}")
     for r in rows:
         started = (r.get("started_at") or "")[:19] or "—"
         print(f"  {started:<19} {str(r.get('trace_id', '—')):<26} "
               f"{str(r.get('furthest', '—')):<11} {str(r.get('status', '—')):<9} "
-              f"{str(r.get('goal') or '—'):<20} {fmt_dur(r.get('total_sec'))}")
+              f"{str(r.get('goal') or '—'):<20} {fmt_dur(r.get('exec_sec')):>8} {fmt_dur(r.get('total_sec')):>8}")
 
 
 def print_traces(since: datetime, limit: int, raw: bool) -> None:
@@ -633,9 +666,7 @@ def print_traces(since: datetime, limit: int, raw: bool) -> None:
         return
     traces = [TraceView(tid, evs) for tid, evs in by_trace(load_events(since)).items()]
     traces.sort(key=lambda t: t.stage_ts.get("heard") or now_aware())
-    rows = [t.to_record() for t in traces[-limit:]]
-    for r in rows:  # выровнять поле под ту же таблицу
-        r["total_sec"] = (r.get("latency_sec") or {}).get("heard->spoken")
+    rows = [t.to_record() for t in traces[-limit:]]  # to_record кладёт total_sec / exec_sec
     print(f"\n═══ последние {len(rows)} реплик (из сырых логов) ═══")
     _print_traces_table(rows)
     print()

@@ -97,7 +97,9 @@ STAGE_INDEX = {s.key: i for i, s in enumerate(STAGES)}
 
 # Промежутки между стадиями, для разбора задержки (человекочитаемые пары).
 GAPS = [(STAGE_KEYS[i], STAGE_KEYS[i + 1]) for i in range(len(STAGE_KEYS) - 1)]
-GAP_KEYS = [f"{a}->{b}" for a, b in GAPS] + ["heard->spoken"]
+# + два сводных: полное время (heard->spoken) и время выполнения без
+# озвучки (heard->phrased — до готового ответа, без синтеза + воспроизведения).
+GAP_KEYS = [f"{a}->{b}" for a, b in GAPS] + ["heard->spoken", "heard->phrased"]
 
 
 def reached_lookup() -> dict[tuple[str, str], int]:
