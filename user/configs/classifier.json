@@ -18,7 +18,7 @@
     "offline_only_flag": "offline_only.flag"
   },
   "local_model": {
-    "embedding_model": "cointegrated/rubert-tiny2",
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     "model_file": "local_model.joblib",
     "model_backup_file": "local_model.joblib.bak",
     "min_examples_per_class": 30

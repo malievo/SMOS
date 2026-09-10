@@ -85,8 +85,14 @@ DEFAULTS = {
 
     "local_model": {
         # Модель эмбеддингов текста (sentence-transformers), см.
-        # embedding_classifier_design.md.
-        "embedding_model": "cointegrated/rubert-tiny2",
+        # embedding_classifier_design.md. MiniLM-L12 (мультиязычный,
+        # ~118M) вместо прежнего rubert-tiny2 (~29M): векторы разделимее,
+        # уверенность головы калибрована честнее (см. обсуждение —
+        # rubert-tiny2 у границы давал шум). Он же — общий эмбеддер для
+        # будущего офлайна SWL (local_brain_design.md §5), одна копия в
+        # RAM на оба. Цена: ~450 МБ RAM и десятки мс на CPU вместо
+        # единиц — на RPi ощутимо, на десктопе/сервере нет.
+        "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         # Куда сохраняется обученный классификатор поверх эмбеддингов.
         "model_file": "local_model.joblib",
         # Перед перезаписью model_file текущая версия копируется сюда —
