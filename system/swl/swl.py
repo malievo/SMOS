@@ -15,10 +15,16 @@ SWL — линейное звено пайплайна на одну фразу,
 - Новая запись с label == "command": фраза уходит в intent_provider
   (GigaChat на bootstrap-этапе, см. swl_design.md) вместе с каталогом
   целей, собранным из манифестов модулей. Получаем (goal, params).
-    - goal найден -> пишем goal.json в ../core/goals/ (атомарно,
-      temp + rename — ядро читает эту папку и не должно поймать файл на
-      середине записи) и дописываем фразу+разбор в output/dataset.jsonl
-      (материал для будущей локальной модели-разборщика).
+    - goal найден -> прогоняем params через схему слотов действия
+      (validate_and_normalize + slot_types.py, см. params_design.md):
+      «12 x 10» -> «12 * 10», «семь утра» -> структура полей, проверка
+      формата до отправки. Потом пишем goal.json в ../core/goals/
+      (атомарно, temp + rename — ядро читает эту папку и не должно
+      поймать файл на середине записи) и дописываем фразу+сырой разбор в
+      output/dataset.jsonl (материал для будущей локальной модели).
+    - не хватает обязательного слота, который неоткуда взять -> цель НЕ
+      отправляется, логируем `missing_required_param` (полноценный
+      переспрос — отдельная система, см. params_design.md §7).
     - goal == None (LLM не нашла подходящей цели) -> пока просто
       логируем `no_intent_match` и ничего не отправляем. Что делать в
       этом случае по-хорошему (переспросить голосом? отдать в чат?) —
@@ -48,6 +54,7 @@ import config  # noqa: E402
 from log_client import send_log  # noqa: E402
 import catalog  # noqa: E402
 import intent_provider  # noqa: E402
+import slot_types  # noqa: E402
 
 CFG = config.load(SCRIPT_DIR)
 
@@ -109,6 +116,61 @@ def append_to_dataset(text: str, goal: str | None, params: dict) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def validate_and_normalize(goal: str, raw_params: dict, catalog_entry: dict,
+                           trace_id: str = "") -> dict | None:
+    """Приводит вытащенные из фразы параметры к форме, объявленной в
+    схеме `params` действия (см. params_design.md, slot_types.py).
+
+    Возвращает dict для поля state цели — либо None, если не хватает
+    обязательного слота, который неоткуда взять (тогда цель не
+    отправляется, как и при goal is None).
+
+    - слот со схемой: normalize через slot_types; невалидное значение
+      отбрасываем с логом `slot_invalid` (модуль потом сам решит, хватает
+      ли ему данных);
+    - слот без схемы: пропускаем как есть (обратная совместимость,
+      standalone-слоты — отложенный вопрос, params_design.md §12);
+    - обязательный слот пуст: есть `default` — подставляем; иначе если
+      слот в `needs` — оставляем планировщику; иначе -> None.
+    """
+    schema = catalog_entry.get("params") or {}
+    needs = set(catalog_entry.get("needs") or [])
+    raw = {k: v for k, v in (raw_params or {}).items() if v is not None and v != ""}
+    resolved: dict = {}
+
+    for name, value in raw.items():
+        slot = schema.get(name)
+        if slot is None:
+            resolved[name] = value
+            continue
+        if slot.get("type") not in slot_types.KNOWN_TYPES:
+            send_log("WARNING", "slot_type_unknown", {
+                "goal": goal, "slot": name, "type": slot.get("type"),
+            }, trace_id=trace_id)
+        try:
+            resolved[name] = slot_types.normalize(value, slot)
+        except slot_types.SlotError as e:
+            send_log("WARNING", "slot_invalid", {
+                "goal": goal, "slot": name, "raw": value, "error": str(e),
+            }, trace_id=trace_id)
+            print(f"[swl] слот {name!r}={value!r} не по формату ({e}) — отброшен")
+
+    for name, slot in schema.items():
+        if name in resolved:
+            continue
+        if "default" in slot:
+            resolved[name] = slot["default"]
+            continue
+        if slot.get("required") and name not in needs:
+            send_log("INFO", "missing_required_param", {
+                "goal": goal, "slot": name,
+            }, trace_id=trace_id)
+            print(f"[swl] не хватает обязательного параметра {name!r} для цели {goal!r} — цель не отправлена")
+            return None
+
+    return resolved
+
+
 def handle_command(text: str, trace_id: str = "") -> None:
     """Разбирает одну фразу-команду в цель и отправляет её ядру.
     trace_id приходит из classified.json; для разового прогона из CLI
@@ -118,24 +180,32 @@ def handle_command(text: str, trace_id: str = "") -> None:
     goals_catalog = catalog.build()
 
     try:
-        goal, params = intent_provider.extract(text, goals_catalog)
+        goal, raw_params = intent_provider.extract(text, goals_catalog)
     except Exception as e:
         send_log("ERROR", "intent_extraction_failed", {"text": text, "error": str(e)}, trace_id=trace_id)
         print(f"[swl] ошибка разбора фразы: {e}")
         return
 
-    append_to_dataset(text, goal, params)
+    # В датасет пишем СЫРОЙ разбор модели — это обучающий сигнал для
+    # будущей локальной модели-разборщика (нормализация — отдельный слой).
+    append_to_dataset(text, goal, raw_params)
 
     if goal is None:
         send_log("INFO", "no_intent_match", {"text": text}, trace_id=trace_id)
         print(f"[swl] ни одна цель не подошла: {text!r}")
         return
 
-    goal_file = write_goal(goal, params, text, trace_id)
+    entry = next((c for c in goals_catalog if c.get("goal") == goal), {})
+    state = validate_and_normalize(goal, raw_params, entry, trace_id)
+    if state is None:
+        return  # не хватает обязательного слота — уже залогировано
+
+    goal_file = write_goal(goal, state, text, trace_id)
     send_log("INFO", "intent_extracted", {
-        "text": text, "goal": goal, "params": params, "goal_file": goal_file,
+        "text": text, "goal": goal, "params": state, "raw_params": raw_params,
+        "goal_file": goal_file,
     }, trace_id=trace_id)
-    print(f"[swl] {text!r} -> цель {goal!r}, параметры {params} -> {goal_file}")
+    print(f"[swl] {text!r} -> цель {goal!r}, параметры {state} -> {goal_file}")
 
 
 def main() -> None:

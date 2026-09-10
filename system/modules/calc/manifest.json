@@ -8,7 +8,10 @@
       "description": "Вычисляет арифметическое выражение, переданное строкой",
       "needs": ["expression"],
       "produces": ["calc_result"],
-      "cost": 1
+      "cost": 1,
+      "params": {
+        "expression": {"type": "arithmetic_expression", "required": true}
+      }
     }
   ]
 }

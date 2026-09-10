@@ -8,12 +8,19 @@ catalog.py — «каталог целей» SWL: что система вооб
 них не должен носить эту логику в себе.
 
 Одна запись каталога:
-    {"goal": <produces-ключ>, "description": <текст из манифеста>, "needs": [<ключи>]}
+    {"goal": <produces-ключ>, "description": <текст>, "needs": [<ключи>], "params": {<схема слотов>}}
 
 `goal` — то, что модуль объявляет в `produces`; `description` — поле
 манифеста, заведённое ровно под этот случай (см.
 ../core/module_init/manifest_design.md); `needs` — что этой цели бывает
-нужно на вход.
+нужно на вход; `params` — схема слотов действия (тип/обязательность/
+значения), по ней intent_provider строит промпт «заполни форму», а swl.py
+нормализует вытащенные значения (см. params_design.md). Действия без
+блока `params` дают `params: {}` — обратная совместимость.
+
+Действия с `"no_user_can_ask": true` в каталог НЕ попадают — это цели
+только для планировщика (промежуточные ключи вроде `city`), пользователь
+их голосом не просит (см. params_design.md §6).
 
 Если один и тот же ключ производят несколько действий — берётся первое
 (та же логика, что в planner.find_action_that_produces).
@@ -56,6 +63,14 @@ def build(force: bool = False) -> list[dict]:
     seen: set[str] = set()
     for mod in modules:
         for action in mod.get("actions", []):
+            # Промежуточные действия (city от location и т.п.) не
+            # предлагаем пользователю как цель — их находит только
+            # планировщик поиском по графу. Пропуск НЕ помечает ключ в
+            # `seen`: если ту же цель производит и обычное действие, оно
+            # всё равно попадёт в каталог.
+            if action.get("no_user_can_ask") is True:
+                continue
+            params_schema = action.get("params") or {}
             for key in action.get("produces", []):
                 if key in seen:
                     continue
@@ -64,6 +79,7 @@ def build(force: bool = False) -> list[dict]:
                     "goal": key,
                     "description": action.get("description", ""),
                     "needs": action.get("needs", []),
+                    "params": params_schema,
                 })
 
     _cache = catalog

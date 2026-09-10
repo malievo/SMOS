@@ -87,3 +87,37 @@ def _validate(data: dict, source: Path) -> None:
 
         if "cost" in action and not isinstance(action["cost"], (int, float)):
             raise ManifestError(f"{source}: actions[{i}] — cost должен быть числом")
+
+        # no_user_can_ask — необязательный флаг: true = действие только для
+        # планировщика, в каталог целей SWL не попадает (см.
+        # ../../swl/params_design.md §6). По умолчанию false.
+        if "no_user_can_ask" in action and not isinstance(action["no_user_can_ask"], bool):
+            raise ManifestError(f"{source}: actions[{i}] — no_user_can_ask должен быть true/false")
+
+        # params — необязательная схема слотов: как SWL разбирает фразу в
+        # значения параметров (см. ../../swl/params_design.md). Тут только
+        # структурная проверка; смысл `type` знает slot_types.py в SWL —
+        # ядро в это не лезет (остаётся независимым от SWL).
+        if "params" in action:
+            params = action["params"]
+            if not isinstance(params, dict):
+                raise ManifestError(f"{source}: actions[{i}].params должен быть объектом")
+            for slot_name, slot in params.items():
+                if not isinstance(slot, dict):
+                    raise ManifestError(
+                        f"{source}: actions[{i}].params[{slot_name!r}] должен быть объектом")
+                if not isinstance(slot.get("type"), str) or not slot["type"]:
+                    raise ManifestError(
+                        f"{source}: actions[{i}].params[{slot_name!r}] — нужно строковое поле 'type'")
+                if "required" in slot and not isinstance(slot["required"], bool):
+                    raise ManifestError(
+                        f"{source}: actions[{i}].params[{slot_name!r}].required должен быть true/false")
+                if "values" in slot and (not isinstance(slot["values"], list) or not slot["values"]):
+                    raise ManifestError(
+                        f"{source}: actions[{i}].params[{slot_name!r}].values должен быть непустым списком")
+                if "aliases" in slot and not isinstance(slot["aliases"], dict):
+                    raise ManifestError(
+                        f"{source}: actions[{i}].params[{slot_name!r}].aliases должен быть объектом")
+                if slot["type"] == "enum" and not slot.get("values"):
+                    raise ManifestError(
+                        f"{source}: actions[{i}].params[{slot_name!r}] — enum-слоту нужен непустой 'values'")

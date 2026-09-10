@@ -7,7 +7,8 @@
       "command": "get_city",
       "description": "Возвращает текущий город пользователя",
       "needs": [],
-      "produces": ["city"]
+      "produces": ["city"],
+      "no_user_can_ask": true
     }
   ]
 }

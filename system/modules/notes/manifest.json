@@ -8,7 +8,10 @@
       "description": "Сохранить новую заметку",
       "needs": ["note_text"],
       "produces": ["note_saved"],
-      "cost": 1
+      "cost": 1,
+      "params": {
+        "note_text": {"type": "text", "required": true}
+      }
     },
     {
       "command": "list_notes",
