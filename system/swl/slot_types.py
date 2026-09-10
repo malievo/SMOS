@@ -197,24 +197,28 @@ _RU_ORDINAL = {
 }
 
 
+def _dt(hour, minute, mer):
+    """Собирает результат datetime с проверкой диапазона. hour 0..23,
+    minute 0..59 — иначе это не время (напр. «в 25:00»)."""
+    if not (0 <= hour <= 23) or not (0 <= minute <= 59):
+        raise SlotError(f"время вне диапазона: {hour:02d}:{minute:02d}")
+    return {"hour": hour, "minute": minute, "meridiem": mer, "date": None}
+
+
 def _datetime(raw, slot, ctx):
     """-> {hour, minute, meridiem, date}. date всегда None: SWL не знает,
-    сегодня или завтра — это решает модуль по референсному времени."""
+    сегодня или завтра — это решает модуль по референсному времени.
+    meridiem («am»/«pm»/None) — подсказка, 12→24 переводит модуль."""
     if isinstance(raw, dict):
         if raw.get("hour") is None:
             raise SlotError("в структуре времени нет hour")
-        return {
-            "hour": int(raw["hour"]),
-            "minute": int(raw.get("minute") or 0),
-            "meridiem": raw.get("meridiem"),
-            "date": raw.get("date"),
-        }
+        return _dt(int(raw["hour"]), int(raw.get("minute") or 0), raw.get("meridiem"))
 
     s = str(raw).strip().lower()
     if "полночь" in s:
-        return {"hour": 0, "minute": 0, "meridiem": None, "date": None}
+        return _dt(0, 0, None)
     if "полдень" in s:
-        return {"hour": 12, "minute": 0, "meridiem": None, "date": None}
+        return _dt(12, 0, None)
 
     mer = None
     for w, m in _RU_MERIDIEM.items():
@@ -224,23 +228,22 @@ def _datetime(raw, slot, ctx):
 
     m = re.search(r"\b(\d{1,2})[:.\-](\d{2})\b", s)
     if m:
-        return {"hour": int(m.group(1)), "minute": int(m.group(2)),
-                "meridiem": mer, "date": None}
+        return _dt(int(m.group(1)), int(m.group(2)), mer)
 
     m = re.search(r"\bпол\s?(" + "|".join(_RU_ORDINAL) + r")\b", s)
     if m:
         n = _RU_ORDINAL[m.group(1)]
-        return {"hour": (n - 1) % 24, "minute": 30, "meridiem": mer, "date": None}
+        return _dt((n - 1) % 24, 30, mer)
 
     m = re.search(r"\b(\d{1,2})\b", s)
     if m:
-        return {"hour": int(m.group(1)), "minute": 0, "meridiem": mer, "date": None}
+        return _dt(int(m.group(1)), 0, mer)
 
     cleaned = re.sub(r"\b(в|во|на|к|около|часов|часа|час|утра|утром|вечера|"
                      r"вечером|дня|днём|днем|ночи|ночью)\b", " ", s)
     n = _ru_number(cleaned)
     if n is not None and 0 <= n <= 23:
-        return {"hour": n, "minute": 0, "meridiem": mer, "date": None}
+        return _dt(n, 0, mer)
 
     raise SlotError(f"не распознано как время: {raw!r}")
 
@@ -270,17 +273,21 @@ def _duration(raw, slot, ctx):
         return 5400
 
     total = 0
+    saw_count = False
     for unit_re, mult in _DUR_UNITS:
         for m in re.finditer(r"(\d+|[а-яё]+)\s*" + unit_re, s):
             tok = m.group(1)
             n = int(tok) if tok.isdigit() else _ru_number(tok)
             if n is not None:
+                saw_count = True
                 total += n * mult
 
-    if total <= 0:
-        if re.search(r"\bчас\b", s):
+    # «час» / «минуту» без числа — единица по умолчанию. Но не когда число
+    # уже назвали (иначе «0 минут» превратилось бы в 60).
+    if total <= 0 and not saw_count:
+        if re.search(r"\bчас\w*\b", s):
             total = 3600
-        elif re.search(r"\bминут\w*\b", s):
+        elif re.search(r"\b(минут\w*|минуту)\b", s):
             total = 60
 
     if total <= 0:
